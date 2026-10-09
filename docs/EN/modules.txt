@@ -1,0 +1,1229 @@
+====================================== BASIC ELEMENTS ======================================
+
+-------------------------------------- Digit --------------------------------------
+
+Purpose:
+- One physical position of the ten-position display.
+- Displays a character based on Value and an independent decimal point Dot.
+
+Inputs:
+- value
+- dot
+
+Outputs:
+- Physical illuminated segments of Digit; no external numeric outputs.
+
+Timing:
+- Combinational display; numeric timing was not recorded.
+
+Algorithm:
+segments = decode(value)
+point = (dot != 0)
+
+Principle:
+- Codes 0..9 and display characters are decoded by separate conditional branches.
+- Dot does not change Value and consumes no additional position.
+- Naming exception: ports without -in-/-out- prefixes.
+
+
+-------------------------------------- Indicator --------------------------------------
+
+Purpose:
+- Direct control of a separate light indicator (including the M indicator).
+
+Inputs:
+- -in-sig
+
+Outputs:
+- Indicator LED.
+
+Timing:
+- No separate computational timing.
+
+Algorithm:
+-in-sig → LED
+
+Principle:
+- The signal is connected directly; no arithmetic or logic transformations.
+- The indicator is independent of the ten Digit positions.
+
+
+-------------------------------------- Memory --------------------------------------
+
+Purpose:
+- Store one numeric value by controlled writing into a closed feedback loop.
+
+Inputs:
+- -in-data
+- -in-write
+
+Outputs:
+- -out-out
+
+Timing:
+- Each serial Valve takes 1 tick; after Write closes, the output may still change while data propagates internally.
+
+Algorithm:
+writeGate = valve(-in-data, -in-write)
+storageGate = valve(storageLine, 1)
+storageLine = wire(writeGate, storageGate)
+-out-out = pass(storageGate)
+
+Principle:
+- Write opens the input Valve; the next Valve feeds the signal back into its own loop, and the last isolates the output from external feedback.
+- A closed Write blocks new values but does not stop signals already circulating in the loop.
+- Zero is ordinary data; writes are controlled solely by -in-write.
+- Determining when the output becomes stable after Write=0 is outside this module (see SyncBuffer).
+- wire(a, b, ...) denotes a physical shared wire connecting gated sources; it is not a Function, OR, or arithmetic addition.
+
+
+-------------------------------------- InitMemory --------------------------------------
+
+Purpose:
+- Store a single value with automatic one-time initialization.
+- After initialization, behaves as ordinary Memory.
+
+Inputs:
+- -in-data
+- -in-write
+- -in-initValue
+
+Outputs:
+- -out-out
+
+Timing:
+- Initialization: approximately 1 tick.
+- Subsequent writes: Memory timing.
+
+Algorithm:
+initPulse = AND(1, NOT(1))
+
+writeGate = valve(-in-data, -in-write)
+initGate = valve(-in-initValue, initPulse)
+
+storageLine = wire(writeGate, storageGate, initGate)
+storageGate = valve(storageLine, 1)
+
+-out-out = pass(storageGate)
+
+Principle:
+- At startup, the direct constant 1 and its inversion briefly overlap because NOT takes time to propagate.
+- The resulting pulse opens InitGate and injects InitValue into the memory loop.
+- InitGate closes after the initial pulse.
+- StorageGate maintains feedback, while WriteGate performs normal writes.
+- Pass isolates the external output from the feedback loop.
+- Later changes to InitValue do not overwrite the stored value.
+
+
+-------------------------------------- BusMemory --------------------------------------
+
+Purpose:
+- Store a bus using the same physical feedback as Memory.
+
+Inputs:
+- -inB-busData
+- -in-write
+
+Outputs:
+- -outB-busOut
+
+Timing:
+- Each serial BusGate adds 1 tick; after Write=0, data may still be propagating inside the memory.
+
+Algorithm:
+writeGate = busGate(-inB-busData, -in-write).out
+storageGate = busGate(storageLine, 1).out
+storageLine = wire(writeGate, storageGate)
+-outB-busOut = busGate(storageGate, 1).out
+
+Principle:
+- BusGates replace scalar Valves throughout the Memory stages: one parallel Valve per bus slot.
+- The circulating loop retains the last bus value; the third stage isolates external outputs from the loop.
+- Unnumbered B: width is determined by the instance. A scalar occupies slot 0; remaining slots are zero.
+- This module does not signal when residual data has finished propagating after Write=0.
+
+
+-------------------------------------- InitBusMemory --------------------------------------
+
+Purpose:
+- Bus memory with automatic one-time initialization of the entire bus.
+- After initialization, behaves as ordinary BusMemory.
+
+Inputs:
+- -inB-busData
+- -in-write
+- -inB-initBus
+
+Outputs:
+- -outB-busOut
+
+Timing:
+- Initialization: approximately 1 tick.
+- Subsequent writes: BusMemory timing.
+
+Algorithm:
+initPulse = AND(1, NOT(1))
+
+writeGate = busGate(-inB-busData, -in-write).out
+initGate = busGate(-inB-initBus, initPulse).out
+
+storageLine = wire(writeGate, storageGate, initGate)
+storageGate = busGate(storageLine, 1).out
+
+-outB-busOut = busGate(storageGate, 1).out
+
+Principle:
+- The startup pulse is generated in the same way as in InitMemory.
+- InitGate injects the initial bus into the storage loop once.
+- The initialization path closes after the pulse.
+- WriteGate performs normal writes; StorageGate retains the stored data.
+- The output BusGate isolates the external bus from the feedback loop.
+- All bus lanes operate in parallel.
+- Later changes to InitBus do not overwrite the stored bus.
+
+
+-------------------------------------- BusGate --------------------------------------
+
+Purpose:
+- Use a single control input to pass or block every bus slot independently.
+
+Inputs:
+- -inB-in
+- -in-enable
+
+Outputs:
+- -outB-out
+
+Timing:
+- 1 tick: all Valves operate in parallel.
+
+Algorithm:
+For i = 0..B-1:
+    (-outB-out)[i] = valve((-inB-in)[i], -in-enable)
+
+Principle:
+- There is a separate Valve for every slot, all driven by the same Enable.
+- For scalar input, slot 0 is used; the remaining slots are zero-filled.
+- B is unnumbered; maximum BusGate width is B15.
+
+
+-------------------------------------- Diode --------------------------------------
+
+Purpose:
+- Unidirectional transfer of a numeric signal without altering its value.
+
+Inputs:
+- in
+
+Outputs:
+- out
+
+Timing:
+- 1 tick.
+
+Algorithm:
+out = pass(in)
+
+Principle:
+- Physically contains a single Pass; the value is unchanged.
+- Used as a directional isolation or delay stage.
+- Names in/out without standard prefixes are an intentional exception.
+
+
+====================================== CONTROLLERS ======================================
+
+-------------------------------------- MainController --------------------------------------
+
+Purpose:
+- Root circuit of the complete physical calculator: input, state, transactions, arithmetic, memory, rendering, and display.
+
+Inputs:
+- btnD0 .. btnD9
+- btnADD, btnSUB, btnMUL, btnDIV
+- btnDOT, btnEQL, btnCLR, btnSGN, btnBSP
+- btnMPL, btnMMN, btnMR, btnMC
+
+Outputs:
+- d0_value, d0_dot .. d9_value, d9_dot
+- indicator
+
+Timing:
+- There is no single fixed transaction duration; it depends on Mode, Flow, the selected worker, and configured stage delays.
+
+Algorithm:
+// Physical buttons → InputController
+btnD0 → InputController.-in-btnD0
+btnD1 → InputController.-in-btnD1
+btnD2 → InputController.-in-btnD2
+btnD3 → InputController.-in-btnD3
+btnD4 → InputController.-in-btnD4
+btnD5 → InputController.-in-btnD5
+btnD6 → InputController.-in-btnD6
+btnD7 → InputController.-in-btnD7
+btnD8 → InputController.-in-btnD8
+btnD9 → InputController.-in-btnD9
+btnADD → InputController.-in-btnADD
+btnSUB → InputController.-in-btnSUB
+btnMUL → InputController.-in-btnMUL
+btnDIV → InputController.-in-btnDIV
+btnDOT → InputController.-in-btnDOT
+btnEQL → InputController.-in-btnEQL
+btnCLR → InputController.-in-btnCLR
+btnSGN → InputController.-in-btnSGN
+btnBSP → InputController.-in-btnBSP
+btnMPL → InputController.-in-btnMPL
+btnMMN → InputController.-in-btnMMN
+btnMR → InputController.-in-btnMR
+btnMC → InputController.-in-btnMC
+
+// InputController Command B2, Valid and GlobalRelease
+InputController.-outB2-cmd → EntryController.-inB2-cmd, CalculationController.-inB2-cmd, MemoryController.-inB2-cmd
+(InputController.-outB2-cmd)[0] → StateController.-in-code
+InputController.-out-valid → StateController.-in-valid
+StateController.-out-release → InputController.-in-release
+StateController.-out-mainValid → EntryController.-in-valid, CalculationController.-in-valid, MemoryController.-in-valid
+
+// Authoritative Mode and reset
+CalculatorState.-out-mode → StateController.-in-mode, CalculationController.-in-mode, MemoryController.-in-mode, DisplayController.-in-mode
+StateController.-out-mode → CalculatorState.-in-mode
+StateController.-out-modeWrite → CalculatorState.-in-modeWrite
+StateController.-out-entryReset → EntryController.-in-reset
+StateController.-out-arithReset → CalculatorState.-in-arithReset
+
+// Entry Current → display and numeric value
+EntryController.{-out-hi,-out-lo,-out-len,-out-neg,-out-dotOn,-out-dotAfter} → EntryRenderer.{-in-hi,-in-lo,-in-len,-in-neg,-in-dotOn,-in-dotAfter}
+EntryController.{-out-hi,-out-lo,-out-len,-out-neg,-out-dotOn,-out-dotAfter} → funEntryToNum.{-in-hi,-in-lo,-in-len,-in-neg,-in-dotOn,-in-dotAfter}
+entryNumber = [funEntryToNum.-out-hi, funEntryToNum.-out-lo, funEntryToNum.-out-exp, funEntryToNum.-out-neg]
+entryNumber → CalculationController.-inB4-entry, MemoryController.-inB4-entry
+
+// ArithmeticState Current: reads
+CalculatorState.-outB4-result → CalculationController.-inB4-result, MemoryController.-inB4-result, ResultNumberSelector.-inB4-result
+CalculatorState.-outB4-operand → CalculationController.-inB4-operand, MemoryController.-inB4-operand, ResultNumberSelector.-inB4-operand
+CalculatorState.-out-operation → CalculationController.-in-operation
+CalculatorState.-out-opPending → CalculationController.-in-opPending
+CalculatorState.-out-rhsReady → CalculationController.-in-rhsReady, MemoryController.-in-rhsReady, ResultNumberSelector.-in-rhsReady
+CalculatorState.-outB4-m → CalculationController.-inB4-memory, MemoryController.-inB4-memory
+
+// Atomic ArithmeticState and MemoryState: writes
+CalculationController.-outB4-result → CalculatorState.-inB4-result
+CalculationController.-outB4-operand → CalculatorState.-inB4-operand
+CalculationController.-out-operation → CalculatorState.-in-operation
+CalculationController.-out-opPending → CalculatorState.-in-opPending
+CalculationController.-out-rhsReady → CalculatorState.-in-rhsReady
+CalculationController.-out-arithWork → CalculatorState.-in-arithWork
+MemoryController.-outB4-memory → CalculatorState.-inB4-m
+MemoryController.-out-memWork → CalculatorState.-in-memoryWork
+
+// Worker completion and sticky error → StateController
+EntryController.-out-release → StateController.-in-entryRel
+CalculationController.-out-release → StateController.-in-calcRel
+MemoryController.-out-release → StateController.-in-memRel
+CalculationController.-out-error → StateController.-in-calcErr
+MemoryController.-out-error → StateController.-in-memErr
+
+// Display: renderers compute independently; DisplayController only selects the Frame
+ResultNumberSelector.{-out-hi,-out-lo,-out-exp,-out-neg} → ResultRenderer.{-in-hi,-in-lo,-in-exp,-in-neg}
+ResultRenderer.{-outB10-values,-outB10-dots} → DisplayController.{-inB10-resultValues,-inB10-resultDots}
+ResultRenderer.-out-fits → DisplayController.-in-resultFits, StateController.-in-resultFits
+EntryRenderer.{-outB10-values,-outB10-dots} → DisplayController.{-inB10-entryValues,-inB10-entryDots}
+ErrorRenderer.{-outB10-values,-outB10-dots} → DisplayController.{-inB10-errorValues,-inB10-errorDots}
+For i=0..9: (DisplayController.-outB10-values)[i] → d[i]_value; (DisplayController.-outB10-dots)[i] → d[i]_dot
+
+// M indicator: only the high five-digit chunk of a canonical Number
+indicator = ((CalculatorState.-outB4-m)[0] != 0)
+
+Principle:
+- The scene supplies only 23 button signals; only codes and Dots for ten Digits and the memory indicator are returned.
+- InputController holds the packet until a single GlobalRelease; StateController owns execution, not arithmetic.
+- EntryState, ArithmeticState, and MemoryState have separate normal writers and expose only authoritative Current outputs.
+- ResultRenderer, EntryRenderer, and ErrorRenderer produce Frames in parallel; DisplayController only selects a Frame.
+- Scene port labels are exceptions to the standard -in-/-out- convention.
+- Connections are described as fan-out and physical wiring. Braces represent elementwise connections between matching named ports, not another function.
+- The scene receives a scalar M indicator. For canonical Numbers, checking M.Hi != 0 is enough; all four B4 fields are zero for zero.
+- Internal routing cables and junctions do not define new state; the scene boundary carries 23 physical buttons, 20 display values, and an Indicator.
+
+
+-------------------------------------- DisplayController --------------------------------------
+
+Purpose:
+- Select one prepared Frame for the physical display without rerendering.
+
+Inputs:
+- -in-mode
+- -inB10-entryValues
+- -inB10-entryDots
+- -inB10-resultValues
+- -inB10-resultDots
+- -in-resultFits
+- -inB10-errorValues
+- -inB10-errorDots
+
+Outputs:
+- -outB10-values
+- -outB10-dots
+
+Timing:
+- Combinational selection using comparisons, OR/AND, and BusGate; exact tick count is not established.
+
+Algorithm:
+isEntry = (-in-mode == 401)
+isResult = (-in-mode == 402)
+isError = (-in-mode == 403)
+knownMode = OR(isEntry, isResult, isError)
+invalidMode = NOT(knownMode)
+entryOn = isEntry
+resultOn = isResult * -in-resultFits
+resultOverflow = isResult * NOT(-in-resultFits)
+errorOn = OR(isError, resultOverflow, invalidMode)
+-outB10-values = wire(busGate(-inB10-entryValues, entryOn).out, busGate(-inB10-resultValues, resultOn).out, busGate(-inB10-errorValues, errorOn).out)
+-outB10-dots = wire(busGate(-inB10-entryDots, entryOn).out, busGate(-inB10-resultDots, resultOn).out, busGate(-inB10-errorDots, errorOn).out)
+
+Principle:
+- ERROR takes priority; ENTRY shows the literal input; RESULT shows the Number only if Fits=1.
+- If the result does not fit, Error Frame is selected. An unknown Mode also displays Error Frame as a fail-safe instead of showing a blank display.
+- All Renderers share the B10 Values + B10 Dots structure.
+
+
+-------------------------------------- InputController --------------------------------------
+
+Purpose:
+- Input frontend: physical buttons → stable single-use Command B2.
+
+Inputs:
+- -in-btnD0 .. -in-btnD9
+- -in-btnADD
+- -in-btnSUB
+- -in-btnMUL
+- -in-btnDIV
+- -in-btnDOT
+- -in-btnEQL
+- -in-btnCLR
+- -in-btnSGN
+- -in-btnBSP
+- -in-btnMPL
+- -in-btnMMN
+- -in-btnMR
+- -in-btnMC
+- -in-release
+
+Outputs:
+- -outB2-cmd
+- -out-valid
+- -out-ready
+
+Timing:
+- Combinational CommandEncoder + transactional SyncBuffer; no fixed total tick count has been established.
+
+Algorithm:
+digits = [-in-btnD0, ..., -in-btnD9]
+ops = [-in-btnADD, -in-btnSUB, -in-btnMUL, -in-btnDIV]
+ctrl = [-in-btnDOT, -in-btnEQL, -in-btnCLR, -in-btnSGN, -in-btnBSP]
+mem = [-in-btnMPL, -in-btnMMN, -in-btnMR, -in-btnMC]
+(rawCmd, capture) = CommandEncoder(digits, ops, ctrl, mem)
+(-outB2-cmd, -out-valid, -out-ready) = SyncBuffer(rawCmd, capture, -in-release)
+
+Principle:
+- All 23 buttons are exposed to the physical interface.
+- While the packet slot is occupied, new button presses do not create a new transaction.
+- Holding a button does not repeat its command; the next command requires the mailbox to be released and Capture to fall.
+- InputController does not know what the command means in the current Mode.
+
+
+-------------------------------------- EntryController --------------------------------------
+
+Purpose:
+- Execute literal Digit / Dot / ToggleSign / Backspace exactly once per command.
+
+Inputs:
+- -inB2-cmd
+- -in-valid
+- -in-reset
+
+Outputs:
+- -out-hi
+- -out-lo
+- -out-len
+- -out-neg
+- -out-dotOn
+- -out-dotAfter
+- -out-release
+
+Timing:
+- The internal FeedbackSynchronizer uses Delay=20 ticks (conservative, not minimal).
+
+Algorithm:
+cmd = (-inB2-cmd)[0]
+digit = (-inB2-cmd)[1]
+isDigit = (cmd == 301)
+isDot = (cmd == 303)
+isSign = (cmd == 306)
+isBsp = (cmd == 307)
+execute = OR(isDigit, isDot, isSign, isBsp)
+(work, done, -out-release) = FeedbackSynchronizer(-in-valid, execute, 20)
+
+hi = EntryState.hi
+lo = EntryState.lo
+len = EntryState.len
+neg = EntryState.neg
+dotOn = EntryState.dotOn
+dotAfter = EntryState.dotAfter
+
+singleZero = (len == 1) AND (hi == 0) AND NOT(dotOn)
+replaceZero = singleZero AND (digit > 0)
+canAppend = (len + neg) < 10
+append = NOT(singleZero) AND canAppend
+appendHi = append AND (len < 5)
+appendLo = append AND (len >= 5)
+digitCandidate = [hi + replaceZero*(digit-hi) + appendHi*(9*hi+digit), lo + appendLo*(9*lo+digit), len + append, neg, dotOn, dotAfter]
+
+dotCandidate = [hi, lo, len, neg, 1, NOT(dotOn)*len + dotOn*dotAfter]
+signCandidate = [hi, lo, len, (NOT(neg) AND (len < 10)), dotOn, dotAfter]
+dotLast = dotOn AND (dotAfter == len)
+delDigit = NOT(dotLast)
+delHi = delDigit AND (len <= 5)
+delLo = delDigit AND (len > 5)
+bspCandidate = [floor(hi/(1+9*delHi)), floor(lo/(1+9*delLo)), max(len-delDigit,1), neg, dotOn AND delDigit, dotAfter*delDigit]
+
+candidate = wire(busGate(digitCandidate, isDigit).out, busGate(dotCandidate, isDot).out, busGate(signCandidate, isSign).out, busGate(bspCandidate, isBsp).out)
+(stateHi, stateLo, stateLen, stateNeg, stateDotOn, stateDotAfter) = EntryState(candidate[0], candidate[1], candidate[2], candidate[3], candidate[4], candidate[5], work, -in-reset)
+-out-hi = stateHi
+-out-lo = stateLo
+-out-len = stateLen
+-out-neg = stateNeg
+-out-dotOn = stateDotOn
+-out-dotAfter = stateDotAfter
+
+Principle:
+- Digit: append a digit only if Len+Neg<10; an initial single zero does not become 00, but zeros after a decimal point remain literal digits.
+- Dot: if absent, set DotOn=1 and DotAfter=Len; repeated Dot leaves the state unchanged.
+- ToggleSign: enabling the sign is allowed when Len<10; disabling it is always allowed.
+- Backspace: remove a trailing decimal point if it follows the last entered digit; otherwise remove the last digit; Len stays at least 1 and Neg is retained.
+- Four branches form Candidate via mutually exclusive BusGates; Work controls the physical write, not branch selection.
+- Global Clear is performed by an external Reset; it is not one of this worker's four normal commands.
+
+
+-------------------------------------- FlowController --------------------------------------
+
+Purpose:
+- Determine Flow from Mode and Command, wait for decode settling, and latch the selection for the whole transaction.
+
+Inputs:
+- -in-code
+- -in-mode
+- -in-valid
+- -in-release
+
+Outputs:
+- -out-flow
+- -out-valid
+
+Timing:
+- DecodeDelay = 20 ticks; the SyncBuffer delay is an additional capture phase.
+
+Algorithm:
+rawFlow = funFlowDecoder(-in-code, -in-mode).flow
+(decodeWork, decodeDone, decodeRelease) = FeedbackSynchronizer(-in-valid, 1, 20)
+(-out-flow, -out-valid, flowReadyInternal) = SyncBuffer(rawFlow, decodeDone, -in-release)
+
+Principle:
+- Raw FlowDecoder is combinational and is not authoritative before DecodeDone.
+- After Capture, Flow is stored in SyncBuffer independently of later Mode/State changes.
+- External Release frees the frozen Flow at the end of the entire transaction.
+- Values 500..504 and the command-dispatch table are in C§7, C§21; the decoder formulas are in F:funFlowDecoder.
+
+
+-------------------------------------- PreparationController --------------------------------------
+
+Purpose:
+- Command PRE phase: perform the required resets before starting a normal worker.
+
+Inputs:
+- -in-flow
+- -in-flowValid
+- -in-valid
+
+Outputs:
+- -out-entryReset
+- -out-arithReset
+- -out-ready
+
+Timing:
+- PrepDelay = 20 ticks for every Flow, including branches with no reset action.
+
+Algorithm:
+(work, done, -out-ready) = FeedbackSynchronizer(-in-valid, -in-flowValid, 20)
+resetEntry = OR((-in-flow == 502), (-in-flow == 504))
+resetArith = (-in-flow == 504)
+-out-entryReset = work * resetEntry
+-out-arithReset = work * resetArith
+
+Principle:
+- 502 BEGIN_ENTRY resets only Entry; 504 CLEAR resets Entry and ArithmeticState.
+- 500, 501, 503 perform no reset but still pass through the same PRE timing phase.
+- Ready becomes active after PRE finishes and is held until the root Valid falls.
+- Clear does not clear M.
+
+
+-------------------------------------- StateController --------------------------------------
+
+Purpose:
+- Central orchestrator of a single command transaction: Decode → Frozen Flow → PRE → Worker → POST → Mode commit → GlobalRelease.
+
+Inputs:
+- -in-code
+- -in-mode
+- -in-valid
+- -in-entryRel
+- -in-calcRel
+- -in-memRel
+- -in-calcErr
+- -in-memErr
+- -in-resultFits
+
+Outputs:
+- -out-entryReset
+- -out-arithReset
+- -out-mainValid
+- -out-mode
+- -out-modeWrite
+- -out-release
+
+Timing:
+- Decode 20, PRE 20, POST-check 20, Mode-commit 20 ticks: configured intervals of separate FeedbackSynchronizers, not an exact end-to-end latency.
+
+Algorithm:
+(flow, flowValid) = FlowController(-in-code, -in-mode, -in-valid, -out-release)
+(-out-entryReset, -out-arithReset, preReady) = PreparationController(flow, flowValid, -in-valid)
+forward = OR(flow == 500, flow == 502, flow == 503)
+-out-mainValid = AND(-in-valid, flowValid, preReady, forward)
+workerRelease = OR(-in-entryRel, -in-calcRel, -in-memRel)
+execDone = OR(forward AND workerRelease, NOT(forward) AND preReady)
+(postCheckWork, postCheckDone, postCheckReady) = FeedbackSynchronizer(-in-valid, execDone, 20)
+entryModeOn = OR(flow == 502, flow == 504)
+resultModeOn = (flow == 503)
+holdModeOn = NOT(OR(entryModeOn, resultModeOn))
+baseMode = wire(valve(-in-mode, holdModeOn), valve(401, entryModeOn), valve(402, resultModeOn))
+errors = OR(-in-calcErr, -in-memErr)
+fitsError = (baseMode == 402) * NOT(-in-resultFits)
+postError = OR(errors, fitsError)
+targetMode = baseMode + postError * (403 - baseMode)
+(modeWork, modeDone, -out-release) = FeedbackSynchronizer(-in-valid, postCheckReady, 20)
+-out-mode = targetMode
+-out-modeWrite = modeWork
+
+Principle:
+- The input command is decoded and frozen exactly once; later changes to Mode do not change the chosen Flow in the current transaction.
+- 501 DROP and 504 CLEAR skip the normal worker and finish EXECUTE via PreReady.
+- For 500/502/503, MainValid remains active until GlobalRelease; it does not fall on the first WorkerRelease.
+- After the worker, POST checks Error and Fits before enabling the Mode write.
+- StateController is the sole normal-write source for Mode; GlobalRelease occurs only after Mode commit.
+- All stage synchronizers receive the same root Valid; their Release signals stay latched until the transaction ends.
+
+
+-------------------------------------- CalculationController --------------------------------------
+
+Purpose:
+- Execute command 302 Operation, 304 Equals, and 310 MR; compute the full Arithmetic Candidate and commit it safely.
+
+Inputs:
+- -inB2-cmd
+- -in-mode
+- -in-valid
+- -inB4-entry
+- -inB4-result
+- -inB4-operand
+- -inB4-memory
+- -in-operation
+- -in-opPending
+- -in-rhsReady
+
+Outputs:
+- -outB4-result
+- -outB4-operand
+- -out-operation
+- -out-opPending
+- -out-rhsReady
+- -out-arithWork
+- -out-error
+- -out-release
+
+Timing:
+- ComputeDelay: Add/Sub 47; Mul 31; Div 179; nonarithmetic branches take at least 20 ticks.
+- Compute is followed by a separate Commit phase with delay 20; -out-arithWork comes from Compute Work, while -out-release comes from Commit Sync. This is not the total end-to-end latency.
+
+Algorithm:
+cmd = (-inB2-cmd)[0]
+newOperation = (-inB2-cmd)[1]
+isOp = (cmd == 302)
+isEq = (cmd == 304)
+isMR = (cmd == 310)
+execute = OR(isOp, isEq, isMR)
+entryRhsOn = (-in-mode == 401)
+resultRhsOn = (-in-mode == 402)
+rhs = wire(busGate(-inB4-entry, entryRhsOn).out, busGate(-inB4-operand, resultRhsOn).out)
+aluOperation = -in-operation
+(aluResult, aluError) = ArithmeticUnit(-inB4-result, rhs, aluOperation)
+opEntryFirst = isOp AND (-in-mode == 401) AND NOT(-in-opPending)
+opEntryPending = isOp AND (-in-mode == 401) AND -in-opPending
+opResultFirst = isOp AND (-in-mode == 402) AND NOT(-in-opPending)
+opResultNoRhs = isOp AND (-in-mode == 402) AND -in-opPending AND NOT(-in-rhsReady)
+opResultRhs = isOp AND (-in-mode == 402) AND -in-opPending AND -in-rhsReady
+eqEntryFirst = isEq AND (-in-mode == 401) AND NOT(-in-opPending)
+eqEntryPending = isEq AND (-in-mode == 401) AND -in-opPending
+eqResult = isEq AND (-in-mode == 402) AND OR(-in-opPending, (-in-operation != 200))
+mrPending = isMR AND -in-opPending
+mrFirst = isMR AND NOT(-in-opPending)
+
+usedBranch = OR(opEntryFirst, opEntryPending, opResultFirst, opResultNoRhs, opResultRhs, eqEntryFirst, eqEntryPending, eqResult, mrPending, mrFirst)
+unchanged = [-inB4-result, -inB4-operand, -in-operation, -in-opPending, -in-rhsReady]
+candidate = wire(
+    busGate(unchanged, NOT(usedBranch)).out,
+    busGate([-inB4-entry, -inB4-entry, newOperation, 1, 0], opEntryFirst).out,
+    busGate([aluResult, -inB4-entry, newOperation, 1, 0], opEntryPending).out,
+    busGate([-inB4-result, -inB4-result, newOperation, 1, 0], opResultFirst).out,
+    busGate([-inB4-result, -inB4-operand, newOperation, 1, 0], opResultNoRhs).out,
+    busGate([aluResult, -inB4-operand, newOperation, 1, 0], opResultRhs).out,
+    busGate([-inB4-entry, -inB4-entry, 200, 0, 0], eqEntryFirst).out,
+    busGate([aluResult, -inB4-entry, -in-operation, 0, 0], eqEntryPending).out,
+    busGate([aluResult, -inB4-operand, -in-operation, 0, 0], eqResult).out,
+    busGate([-inB4-result, -inB4-memory, -in-operation, 1, 1], mrPending).out,
+    busGate([-inB4-memory, -inB4-memory, 200, 0, 0], mrFirst).out)
+needsALU = OR(opEntryPending, opResultRhs, eqEntryPending, eqResult)
+rawCalcError = needsALU * aluError
+
+currentState = [-inB4-result, -inB4-operand, -in-operation, -in-opPending, -in-rhsReady]
+safeNextState = wire(busGate(candidate, NOT(rawCalcError)).out, busGate(currentState, rawCalcError).out)
+(-outB4-result, -outB4-operand, -out-operation, -out-opPending, -out-rhsReady) = split(safeNextState, [4,4,1,1,1])
+
+aluDelay = 47 * OR((-in-operation == 201), (-in-operation == 202)) + 31 * (-in-operation == 203) + 179 * (-in-operation == 204)
+computeDelay = 20 * (1 - needsALU) + aluDelay * needsALU
+(computeWork, computeDone, computeRelease) = FeedbackSynchronizer(-in-valid, execute, computeDelay)
+(commitWork, commitDone, -out-release) = FeedbackSynchronizer(-in-valid, computeRelease, 20)
+-out-arithWork = computeWork
+
+errorSet = -in-valid * computeDone * rawCalcError
+errorHeld = SRFlag(errorSet, NOT(-in-valid)).out
+-out-error = -in-valid * errorHeld
+
+Principle:
+- For 302 in ENTRY with OpPending=0, the new Entry becomes Result and Operand; Operation is updated and OpPending=1 is set.
+- For 302 in ENTRY with OpPending=1, the previous operation is performed with Entry as RHS before the next Operation is selected.
+- For 302 in RESULT with OpPending=0, a new pending operation starts; with OpPending=1,RhsReady=0, only Operation changes; with RhsReady=1, the previous operation is completed before the next Operation.
+- For 304, Entry or the previously stored Operand serves as RHS; implicit RHS and repeated Equals are supported.
+- For 310 with OpPending=1, memory M becomes Operand and sets RhsReady=1; without a pending operation, M becomes the current Result.
+- The relevant branches are merged through BusGates; normal Result/Operand/Operation/Flags are committed together through CalculatorState B11.
+- On rawCalcError, the B11 SafeNextState reuses Current rather than allowing a faulty result into Candidate. Raw error does not interrupt -out-arithWork: the compute/commit sequence still completes normally.
+- Public Error is generated by a separate SRFlag: Set only after Compute Done, Reset on falling Valid. This sticky error remains available through StateController POST and Mode commit.
+- There is no direct rawCalcError → -out-error path; raw error is used only for data protection and ErrorSet after the timer.
+- ComputeDelay depends on actual ALU usage: Add/Sub/Mul/Div take 47/47/31/179; nonarithmetic branches take 20 ticks.
+
+
+-------------------------------------- MemoryController --------------------------------------
+
+Purpose:
+- Process M+, M−, and MC, producing a new Memory Candidate B4 with its own commit phase.
+
+Inputs:
+- -inB2-cmd
+- -in-valid
+- -in-mode
+- -inB4-entry
+- -inB4-result
+- -inB4-operand
+- -inB4-memory
+- -in-rhsReady
+
+Outputs:
+- -outB4-memory
+- -out-memWork
+- -out-error
+- -out-release
+
+Timing:
+- ComputeDelay = 47 ticks for all memory commands; it does not switch among M+/M−/MC.
+- Commit is a separate phase with delay 5; -out-memWork comes from Compute Work, and -out-release from Commit Sync. This is not the total end-to-end latency.
+
+Algorithm:
+code = (-inB2-cmd)[0]
+isMPlus = (code == 308)
+isMMinus = (code == 309)
+isMC = (code == 311)
+execute = OR(isMPlus, isMMinus, isMC)
+selectedResult = ResultNumberSelector(-inB4-result, -inB4-operand, -in-rhsReady)
+modeEntry = (-in-mode == 401)
+currentNumber = wire(busGate(-inB4-entry, modeEntry).out, busGate(selectedResult, NOT(modeEntry)).out)
+aluOperation = select(isMMinus, 202, 201)
+(aluResult, aluError) = ArithmeticUnit(-inB4-memory, currentNumber, aluOperation)
+useALU = OR(isMPlus, isMMinus)
+proposedM = wire(busGate(aluResult, useALU).out, busGate([0,0,0,0], isMC).out)
+rawCalcError = useALU * aluError
+-outB4-memory = wire(busGate(proposedM, NOT(rawCalcError)).out, busGate(-inB4-memory, rawCalcError).out)
+
+(computeWork, computeDone, computeRelease) = FeedbackSynchronizer(-in-valid, execute, 47)
+(commitWork, commitDone, -out-release) = FeedbackSynchronizer(-in-valid, computeRelease, 5)
+-out-memWork = computeWork
+
+errorSet = -in-valid * computeDone * rawCalcError
+errorHeld = SRFlag(errorSet, NOT(-in-valid)).out
+-out-error = -in-valid * errorHeld
+
+Principle:
+- M+ = M + CurrentNumber, M− = M − CurrentNumber, MC = canonical zero.
+- In Mode ENTRY, CurrentNumber is EntryNumber; in RESULT, RhsReady selects Operand if set, otherwise Result.
+- Computation uses a dedicated ArithmeticUnit instance; the ALU is not shared with CalculationController.
+- MR=310 is not a memory-write command: CalculationController executes it, reading M.
+- Clear=305 does not clear M; M changes only through normal MemoryController transactions.
+- On ALU error, SafeM forwards CurrentM instead of faulty ProposedM. This is a separate B4 selection through mutually exclusive BusGates.
+- Error is sampled after Compute Done, stored in SRFlag, and held until Valid falls; raw ALUError is not connected directly to public -out-error.
+- MC does not use the ALU: useALU=0, so unselected arithmetic branches cannot block memory clearing.
+- Timing of the final physical circuit: Compute 47 and Commit 5. CommitDelay=5 matches the minimum allowed ExecTimer Delay and the Candidate freeze → Current copy window.
+
+
+====================================== SYNCHRONIZATION ======================================
+
+-------------------------------------- SRFlag --------------------------------------
+
+Purpose:
+- Retain a one-bit state with Set and Reset inputs; Reset has priority.
+
+Inputs:
+- -in-set
+- -in-reset
+
+Outputs:
+- -out-out
+
+Timing:
+- Stateful operation through Memory; no exact end-to-end tick count has been established.
+
+Algorithm:
+write = OR(-in-set, -in-reset)
+data = -in-set * (1 - (-in-reset))
+-out-out = Memory(data, write).out
+
+Principle:
+- Set or Reset enables a write to the physical Memory.
+- If Set=1 and Reset=1 simultaneously, 0 is written; otherwise the Memory loop retains the value between writes.
+
+
+-------------------------------------- SyncBuffer --------------------------------------
+
+Purpose:
+- One-packet mailbox between producer and consumer, with bus capture, settle tracking, and repeated-Capture protection.
+
+Inputs:
+- -inB-busData
+- -in-capture
+- -in-release
+
+Outputs:
+- -outB-busData
+- -out-valid
+- -out-ready
+
+Timing:
+- Valid is produced after Write physically closes, through NOT → Diode → Diode and the output Gate; this is a settling barrier, not a fixed worker delay.
+
+Algorithm:
+accept = -in-capture * -out-ready
+lock = SRFlag(accept, -in-release).out
+write = NOT(lock)
+-outB-busData = BusMemory(-inB-busData, write).busOut
+settled = Diode(Diode(NOT(write).out).out).out
+
+usedReset = NOT(-in-capture) * NOT(-in-release) * NOT(lock) * NOT(settled)
+used = SRFlag(accept, usedReset).out
+-out-ready = NOT(lock) * NOT(used) * NOT(-in-release) * NOT(settled)
+-out-valid = lock * settled
+
+Principle:
+- When Ready=1, BusMemory accepts the input stream. Accept sets Lock and Used and closes Write.
+- Settled is derived from the actual Write line. Two Diodes allow residual data to reach the memory output.
+- Valid appears only when Lock=1 and Settled=1; -outB-busData must not be read before then.
+- Release clears Lock. Used is not reset until Capture and Release are deasserted and residual Settled has cleared.
+- Ready returns only after Lock, Used, Release, and Settled clear; holding Capture cannot create a second packet.
+- Bus width B is determined by the instance. The producer is responsible for data correctness; SyncBuffer guarantees stability after Valid.
+
+
+-------------------------------------- FeedbackSynchronizer --------------------------------------
+
+Purpose:
+- Control one worker phase Work → Done → held Release.
+
+Inputs:
+- -in-valid
+- -in-execute
+- -in-delay
+
+Outputs:
+- -out-work
+- -out-done
+- -out-release
+
+Timing:
+- The working delay is set by -in-delay through ExecTimer; additional control gates must not be treated as part of pure Delay.
+
+Algorithm:
+start = AND(-in-valid, -in-execute)
+timerDone = ExecTimer(start, -in-delay).done
+-out-done = AND(timerDone, start)
+-out-release = SRFlag(set=-out-done, reset=NOT(-in-valid)).out
+-out-work = AND(start, NOT(-out-release))
+
+Principle:
+- Release stays asserted until Valid falls; it is not a short pulse.
+- Execute authorizes the worker to handle the command; Valid is the root signal for the current transaction.
+- Exposes the state-write Work window and one-tick Done while preventing repeated execution of the same transaction.
+
+
+-------------------------------------- ExecTimer --------------------------------------
+
+Purpose:
+- Generate a single Done event after a specified number of ticks from Start.
+
+Inputs:
+- -in-start
+- -in-delay
+
+Outputs:
+- -out-done
+
+Timing:
+- Configurable Delay, supported minimum 5; Done lasts 1 tick.
+
+Algorithm:
+startEdge(t) = (-in-start)(t) AND NOT((-in-start)(t-1))
+seed(t) = valve((-in-delay)(t), startEdge(t))
+count(t) = max(0, seed(t), count(t-1)-1)
+-out-done = (count == 5)
+
+Principle:
+- The timer uses a feedback counter, Max, and a one-tick comparison window.
+- Holding Start does not restart the timer; a new event requires a new edge.
+- After completion, idle feedback oscillates between 0 and -1; Done activates only at 5.
+- Formulas with t represent the loop's logical behavior; in the physical circuit, the edge arises from different depths of the direct path and NOT/AND, not a separate ready-made risingEdge module. Comparing against 5 compensates for the Start → Done path depth.
+
+
+====================================== RENDERING / STATE / ARITHMETIC INTERFACE ======================================
+
+-------------------------------------- ResultRenderer --------------------------------------
+
+Purpose:
+- Convert a mathematical Number into a ten-digit result Frame.
+- Produce the Fits flag without changing the Number itself.
+
+Inputs:
+- -in-hi
+- -in-lo
+- -in-exp
+- -in-neg
+
+Outputs:
+- -outB10-values
+- -outB10-dots
+- -out-fits
+
+Timing:
+- Composed of rendering functions and bus selectors; exact total timing has not been established.
+
+Algorithm:
+(fixedOn, scientificOn) = funDisplayMode(-in-exp, -in-neg)
+fixedKeep = funPrecision(-in-exp, -in-neg).keep
+fixedRound = funRoundNumber(-in-hi, -in-lo, fixedKeep)
+fixedExp = -in-exp + fixedRound.expAdd
+fixedSigKeep = funTrimZeros(fixedRound.hi, fixedRound.lo, fixedExp).keep
+fixedMeta = funFixedMeta(fixedExp, -in-neg, fixedSigKeep)
+
+For pos = 0..9:
+    fixedV[pos], fixedD[pos] = funFixedCell(fixedRound.hi, fixedRound.lo, fixedMeta.start, fixedMeta.sigStart, fixedMeta.dotPos, fixedMeta.dotOn, -in-neg, pos)
+
+sciRound = funScientificRound(-in-hi, -in-lo, -in-exp, -in-neg)
+sciTrim = funScientificTrim(sciRound.hi, sciRound.lo, sciRound.maxKeep).keep
+sciExpMeta = funExponentMeta(sciRound.exp)
+sciMeta = funScientificMeta(sciTrim, -in-neg, sciExpMeta.expNeg, sciExpMeta.expDigits)
+
+For pos = 0..9:
+    scientificV[pos], scientificD[pos] = funScientificCell(sciRound.hi, sciRound.lo, sciExpMeta.absExp, sciMeta.start, sciMeta.sigStart, sciMeta.ePos, sciMeta.expStart, sciMeta.dotOn, pos)
+
+-outB10-values = wire(busGate(fixedV, fixedOn).out, busGate(scientificV, scientificOn).out)
+-outB10-dots = wire(busGate(fixedD, fixedOn).out, busGate(scientificD, scientificOn).out)
+-out-fits = fixedOn + scientificOn * sciRound.fits
+
+Principle:
+- FIXED and SCIENTIFIC representations are produced by separate fun... branches, both returning the same Frame format.
+- Decimal rounding and trimming redundant zeros are display-only; the stored Number is unchanged.
+- The detailed construction of each cell and exponent is specified in F:funFixedCell, F:funScientificCell, and related functions.
+
+
+-------------------------------------- ErrorRenderer --------------------------------------
+
+Purpose:
+- Constant error Frame "ErrOr".
+
+Inputs:
+- None.
+
+Outputs:
+- -outB10-values
+- -outB10-dots
+
+Timing:
+- Constant Frame; no separate timing specified.
+
+Algorithm:
+-outB10-values = [100,100,100,102,103,103,104,103,100,100]
+-outB10-dots = [0,0,0,0,0,0,0,0,0,0]
+
+Principle:
+- Characters use the shared display code registry; this module does not decide when an error should be displayed.
+
+
+-------------------------------------- EntryRenderer --------------------------------------
+
+Purpose:
+- Convert a literal Entry state into a Frame without numeric normalization.
+
+Inputs:
+- -in-hi
+- -in-lo
+- -in-len
+- -in-neg
+- -in-dotOn
+- -in-dotAfter
+
+Outputs:
+- -outB10-values
+- -outB10-dots
+
+Timing:
+- Combinational path of ten funEntryCell instances; exact total timing has not been established.
+
+Algorithm:
+hiDigits = funChunkDigits(-in-hi)
+loDigits = funChunkDigits(-in-lo)
+For pos = 0..9:
+    v[pos], d[pos] = funEntryCell(hiDigits[0..4], loDigits[0..4], -in-len, -in-neg, -in-dotOn, -in-dotAfter, pos)
+-outB10-values = v[0..9]
+-outB10-dots = d[0..9]
+
+Principle:
+- Ten identical independent funEntryCell instances calculate positions 0..9.
+- Literally entered zeros are preserved through Len; unused positions receive Blank.
+- The sign occupies a separate position; the decimal point uses only Dot on a digit.
+- Input Hi/Lo contain Entry digits, not the normalized Number mantissa.
+
+
+-------------------------------------- CommandEncoder --------------------------------------
+
+Purpose:
+- Encode 23 physical button-level signals into Command B2 and Capture.
+
+Inputs:
+- -inB10-digits
+- -inB4-ops
+- -inB5-ctrl
+- -inB4-mem
+
+Outputs:
+- -outB2-cmd
+- -out-capture
+
+Timing:
+- Combinational encoding; critical path has not been measured separately.
+
+Algorithm:
+For i = 0..9:
+    digitCmd[i] = busGate([301, i], (-inB10-digits)[i]).out
+For i = 0..3:
+    opCmd[i] = busGate([302, 201+i], (-inB4-ops)[i]).out
+For i = 0..4:
+    ctrlCmd[i] = busGate([303+i, 0], (-inB5-ctrl)[i]).out
+For i = 0..3:
+    memCmd[i] = busGate([308+i, 0], (-inB4-mem)[i]).out
+-outB2-cmd = wire(digitCmd[0..9], opCmd[0..3], ctrlCmd[0..4], memCmd[0..3])
+-out-capture = OR((-inB10-digits)[0..9], (-inB4-ops)[0..3], (-inB5-ctrl)[0..4], (-inB4-mem)[0..3])
+
+Principle:
+- Four button groups are packed into buses; each enables its predefined branch through BusGate.
+- Aggregate Capture is a hierarchical OR of Digits, Ops, Ctrl, and Mem groups.
+- Simultaneous button presses have no defined priority.
+- The names ctrl/mem refer to their respective input buses, not separate physical ports.
+
+
+-------------------------------------- EntryState --------------------------------------
+
+Purpose:
+- Physical storage of literal Entry using the Candidate/Current architecture.
+
+Inputs:
+- -in-hi
+- -in-lo
+- -in-len
+- -in-neg
+- -in-dotOn
+- -in-dotAfter
+- -in-work
+- -in-reset
+
+Outputs:
+- -out-hi
+- -out-lo
+- -out-len
+- -out-neg
+- -out-dotOn
+- -out-dotAfter
+
+Timing:
+- Stateful Candidate/Current; idle-phase Reset takes 1 tick. Full normal commit latency has not been measured.
+
+Algorithm:
+candidateData = [-in-hi, -in-lo, -in-len - 1, -in-neg, -in-dotOn, -in-dotAfter]
+candidateNormal = busGate(candidateData, NOT(-in-reset)).out
+candidateReset = busGate([0,0,0,0,0,0], -in-reset).out
+writeData = wire(candidateNormal, candidateReset)
+candidateWrite = OR(-in-work, -in-reset)
+currentWrite = OR(NOT(-in-work), -in-reset)
+Candidate = BusMemory(writeData, candidateWrite).busOut
+Current = BusMemory(Candidate, currentWrite).busOut
+-out-hi = Current[0]
+-out-lo = Current[1]
+-out-len = Current[2] + 1
+-out-neg = Current[3]
+-out-dotOn = Current[4]
+-out-dotAfter = Current[5]
+
+Principle:
+- Internal B6: Hi, Lo, LenRaw, Neg, DotOn, DotAfter.
+- With Work=1, Candidate changes while Current remains the stable source for all calculations.
+- With Work=0, Candidate is frozen and Current writing is enabled.
+- Reset forces selection of explicit ZeroBus and enables writing; the logical state after reset has Len=1 although LenRaw=0.
+- An explicit ZeroBus must not be replaced by simply closing BusGate.
+
+
+-------------------------------------- CalculatorState --------------------------------------
+
+Purpose:
+- Own persistent Mode, ArithmeticState, and MemoryState without command execution logic.
+
+Inputs:
+- -in-mode
+- -in-modeWrite
+- -inB4-result
+- -inB4-operand
+- -in-operation
+- -in-opPending
+- -in-rhsReady
+- -in-arithWork
+- -in-arithReset
+- -inB4-m
+- -in-memoryWork
+
+Outputs:
+- -out-mode
+- -outB4-result
+- -outB4-operand
+- -out-operation
+- -out-opPending
+- -out-rhsReady
+- -outB4-m
+
+Timing:
+- Storage via InitMemory/InitBusMemory/BusMemory; exact end-to-end subsystem latencies were not established separately.
+
+Algorithm:
+modeCandidateWrite = pass(-in-modeWrite)
+modeCurrentWrite = NOT(-in-modeWrite)
+ModeCandidate = InitMemory(-in-mode, modeCandidateWrite, 401).out
+ModeCurrent = Memory(ModeCandidate, modeCurrentWrite).out
+arithmeticData = concat(-inB4-result, -inB4-operand, -in-operation, -in-opPending, -in-rhsReady)
+defaultArithmetic = [0,0,0,0,0,0,0,0,200,0,0]
+arithmeticNormal = busGate(arithmeticData, NOT(-in-arithReset)).out
+arithmeticResetData = busGate(defaultArithmetic, -in-arithReset).out
+arithmeticCandidateData = wire(arithmeticNormal, arithmeticResetData)
+arithmeticCandidateWrite = OR(-in-arithWork, -in-arithReset)
+arithmeticCurrentWrite = NOT(-in-arithWork)
+ArithmeticCandidate = InitBusMemory(B11, arithmeticCandidateData, arithmeticCandidateWrite, defaultArithmetic)
+ArithmeticCurrent = BusMemory(B11, ArithmeticCandidate, arithmeticCurrentWrite)
+(-outB4-result, -outB4-operand, -out-operation, -out-opPending, -out-rhsReady) = split(ArithmeticCurrent, [4,4,1,1,1])
+MemoryCandidate = BusMemory(B4, -inB4-m, Pass(-in-memoryWork))
+MemoryCurrent = BusMemory(B4, MemoryCandidate, NOT(-in-memoryWork))
+-outB4-m = MemoryCurrent
+-out-mode = ModeCurrent
+
+Principle:
+- ModeCandidate (InitMemory, InitValue=401) and ModeCurrent (Memory) are two different physical memories. While modeWrite=1, Candidate is written and Current is isolated. After modeWrite=0, Candidate freezes and Current accepts the new Mode.
+- Pass on ModeCandidate.Write and NOT on ModeCurrent.Write are real control paths and must not be replaced by an abstract Select.
+- A single Mode Memory is NOT sufficient: direct feedback TargetMode → Mode → StateController caused transient invalid values outside 401..403. Candidate/Current physically separates reading from writing.
+- Mode 401 is initialized once; the only normal writer is StateController.
+- B11 ArithmeticState holds Result B4, Operand B4, Operation, OpPending, RhsReady; writes are atomic and CalculationController is its normal writer.
+- Initial Operation=200, so ArithmeticCandidate uses InitBusMemory; Current adopts its value in the idle phase.
+- M has separate B4 Candidate/Current; its initial value is physical zero and its normal writer is MemoryController.
+- Arithmetic Reset affects Candidate input data and Candidate write permission; with active Work, Current must not be opened prematurely.
+- External outputs always come from Current, never Candidate.
+
+
+-------------------------------------- ArithmeticUnit --------------------------------------
+
+Purpose:
+- Stateless execution of +, −, ×, ÷ for two Number B4 values.
+
+Inputs:
+- -inB4-a
+- -inB4-b
+- -in-operation
+
+Outputs:
+- -outB4-result
+- -out-error
+
+Timing:
+- Critical delays of the functions themselves: Add 44; Sub 44; Mul 28; Div 176 ticks. The ArithmeticUnit output path adds up to 3 ticks; working delays are 47 / 47 / 31 / 179 respectively.
+
+Algorithm:
+add = funAdd(-inB4-a, -inB4-b)
+sub = funSub(-inB4-a, -inB4-b)
+mul = funMul(-inB4-a, -inB4-b)
+div = funDiv(-inB4-a, -inB4-b)
+addOn = (-in-operation == 201)
+subOn = (-in-operation == 202)
+mulOn = (-in-operation == 203)
+divOn = (-in-operation == 204)
+invalidOperation = NOT(OR(addOn, subOn, mulOn, divOn))
+-outB4-result = wire(busGate(add.result, addOn).out, busGate(sub.result, subOn).out, busGate(mul.result, mulOn).out, busGate(div.result, divOn).out)
+-out-error = OR(add.error AND addOn, sub.error AND subOn, mul.error AND mulOn, div.error AND divOn, invalidOperation)
+
+Principle:
+- Each operation has its own concurrently computed fun... instance; the result is selected at the end through BusGate.
+- Operation codes 201..204; 200 is None and must not start a mathematical operation.
+- Errors from active operations are combined by a separate OR; ArithmeticUnit holds no state and does not decide when to commit.
+
+
+-------------------------------------- ResultNumberSelector --------------------------------------
+
+Purpose:
+- Select the Number to display depending on whether a ready RHS exists.
+
+Inputs:
+- -inB4-result
+- -inB4-operand
+- -in-rhsReady
+
+Outputs:
+- -out-hi
+- -out-lo
+- -out-exp
+- -out-neg
+
+Timing:
+- BusGate + Bus; exact total timing has not been established.
+
+Algorithm:
+selected = wire(busGate(-inB4-result, NOT(-in-rhsReady)).out, busGate(-inB4-operand, -in-rhsReady).out)
+-out-hi = selected[0]
+-out-lo = selected[1]
+-out-exp = selected[2]
+-out-neg = selected[3]
+
+Principle:
+- With RhsReady=0, select Result; with RhsReady=1, select Operand.
+- Does not compute numbers or modify state; only selects one of two stored Numbers.

@@ -1,0 +1,873 @@
+============================== NAMING AND CODES ==============================
+
+
+------------------------------ 1. Naming contract ------------------------------
+
+
+| Object              | Normative form | Example        |
+|---------------------|----------------|----------------|
+| Scalar input        | -in-name       | -in-valid      |
+| Scalar output       | -out-name      | -out-error     |
+| Bus Bn, input       | -inBn-name     | -inB4-result   |
+| Bus Bn, output      | -outBn-name    | -outB10-values |
+| Generic bus, input  | -inB-name      | -inB-busData   |
+| Generic bus, output | -outB-name     | -outB-busOut   |
+| Internal signal     | lowerCamelCase | computeDone    |
+| B2 command input    | -inB2-cmd      | -inB2-cmd      |
+
+| Rule                    | Contract                                                                 |
+|-------------------------|--------------------------------------------------------------------------|
+| Bn                      | n is the physical bus width                                              |
+| B1                      | Not used: a single element is scalar                                     |
+| B without a number      | Width is determined by the specific generic Circuit instance             |
+| [5], [10], etc.         | Not part of physical port names                                          |
+| bus[0]                  | Reference to a slot index, not a port name                               |
+| wire(a,b,...) in M text | Shared physical wire; not OR, arithmetic addition, or a separate Circuit |
+
+| Naming exception | Current ports                                                                                                   |
+|------------------|-----------------------------------------------------------------------------------------------------------------|
+| Digit            | value, dot                                                                                                      |
+| Diode            | in, out                                                                                                         |
+| funRound         | in, out                                                                                                         |
+| Indicator        | -in-sig                                                                                                         |
+| MainController   | btnD0…btnD9, btnADD/SUB/MUL/DIV, btnDOT/EQL/CLR/SGN/BSP, btnMPL/MMN/MR/MC; d0_value/dot…d9_value/dot, indicator |
+| BusGate          | -inB-in, -in-enable, -outB-out                                                                                  |
+| BusMemory        | -inB-busData, -in-write, -outB-busOut                                                                           |
+| InitBusMemory    | -inB-busData, -in-write, -inB-initBus, -outB-busOut                                                             |
+| SyncBuffer       | -inB-busData, -in-capture, -in-release; -outB-busData, -out-valid, -out-ready                                   |
+| FlowController   | -in-code, -in-mode, -in-valid, -in-release; -out-flow, -out-valid                                               |
+
+
+------------------------------ 2. Global code space ------------------------------
+
+
+| Codes in use | Category                       |
+|--------------|--------------------------------|
+| 0–9          | Decimal digits                 |
+| 100–104      | Display symbols                |
+| 200–204      | Arithmetic operations and None |
+| 301–311      | User commands                  |
+| 401–403      | Semantic calculator modes      |
+| 500–504      | Flow codes                     |
+
+
+------------------------------ 3. DisplayCode ------------------------------
+
+
+| Code | Symbol     |
+|------|------------|
+| 0–9  | Digits 0–9 |
+| 100  | Blank      |
+| 101  | Minus      |
+| 102  | E          |
+| 103  | r          |
+| 104  | O          |
+
+
+------------------------------ 4. OperationCode ------------------------------
+
+
+| Code | Operation |
+|------|-----------|
+| 200  | None      |
+| 201  | Add       |
+| 202  | Sub       |
+| 203  | Mul       |
+| 204  | Div       |
+
+
+------------------------------ 5. CommandCode ------------------------------
+
+
+| Code | Command           | B2[1] — Value |
+|------|-------------------|---------------|
+| 301  | Digit             | 0–9           |
+| 302  | Operation         | 201–204       |
+| 303  | Dot               | 0             |
+| 304  | Equals            | 0             |
+| 305  | Clear             | 0             |
+| 306  | ToggleSign        | 0             |
+| 307  | Backspace         | 0             |
+| 308  | MemoryAdd (M+)    | 0             |
+| 309  | MemorySub (M−)    | 0             |
+| 310  | MemoryRecall (MR) | 0             |
+| 311  | MemoryClear (MC)  | 0             |
+
+
+------------------------------ 6. Mode ------------------------------
+
+
+| Code | Mode   |
+|------|--------|
+| 401  | ENTRY  |
+| 402  | RESULT |
+| 403  | ERROR  |
+
+
+------------------------------ 7. FlowCode ------------------------------
+
+
+| Code | Flow        |
+|------|-------------|
+| 500  | PASS        |
+| 501  | DROP        |
+| 502  | BEGIN_ENTRY |
+| 503  | TO_RESULT   |
+| 504  | CLEAR       |
+
+
+============================== DATA AND STATE FORMATS ==============================
+
+
+------------------------------ 8. Number B4 ------------------------------
+
+
+| B4[i] | Field | Allowed format         |
+|-------|-------|------------------------|
+| 0     | Hi    | Integer 0…99999        |
+| 1     | Lo    | Integer 0…99999        |
+| 2     | Exp   | Integer −999999…999999 |
+| 3     | Neg   | 0 / 1                  |
+
+| Condition                                     | Invariant                                                               |
+|-----------------------------------------------|-------------------------------------------------------------------------|
+| Nonzero canonical Number                      | 10000 ≤ Hi ≤ 99999, 0 ≤ Lo ≤ 99999; Hi's first decimal digit is nonzero |
+| Canonical zero                                | [0,0,0,0]                                                               |
+| Allowed Exp for successful arithmetic results | -999999 ≤ Exp ≤ 999999                                                  |
+| Mathematical value                            | (-1)^Neg × (Hi × 100000 + Lo) × 10^(Exp−9)                              |
+| Unnormalized / arbitrary B4                   | Not a valid Number input to arithmetic functions                        |
+| Result / Operand / M / EntryNumber            | Same Number B4 contract                                                 |
+
+Hi × 100000 + Lo above is a mathematical interpretation; the full ten-digit value is never physically combined into one native scalar.
+For canonical Number B4: Hi=0 ⇔ Number=0; Hi!=0 ⇔ Number!=0. There is no need to check Lo, Exp, or Neg to detect zero.
+
+
+------------------------------ 9. Wide arithmetic B5 ------------------------------
+
+
+| B5[i] | Chunk                 | Bounds  |
+|-------|-----------------------|---------|
+| 0     | C0, most significant  | 0…99999 |
+| 1     | C1                    | 0…99999 |
+| 2     | C2                    | 0…99999 |
+| 3     | C3                    | 0…99999 |
+| 4     | C4, least significant | 0…99999 |
+
+| F                    | Input condition / output guarantee                                                                                   |
+|----------------------|----------------------------------------------------------------------------------------------------------------------|
+| funShift25           | Integer shift: positive moves right, negative moves left; abs(shift) ≥ 25 → zero B5; digits outside B5 are discarded |
+| funWideAdd25         | Unsigned A,B B5; carry beyond 25 decimal digits is discarded                                                         |
+| funWideSub25         | Unsigned A,B B5; precondition A ≥ B; function does not return the sign of A−B                                        |
+| funLeadingPosition25 | For all-zero B5: p=25, zero=1                                                                                        |
+| funNormalizeAddSub25 | Accepts B5 and BigExp; returns Hi, Lo, Exp, zero; sign is determined by outer funAddSub                              |
+| funAddSub            | Big/Small selected by magnitude; bigShift=1, smallShift=BigExp−SmallExp+1                                            |
+
+The five chunks are never combined into a single native 25-digit scalar.
+
+
+------------------------------ 10. Entry ------------------------------
+
+
+| Entry field | Allowed values | Contract                                  |
+|-------------|----------------|-------------------------------------------|
+| Hi          | 0…99999        | First five literal digits                 |
+| Lo          | 0…99999        | Next five literal digits                  |
+| Len         | 1…10           | Counts digits only, not the sign          |
+| Neg         | 0 / 1          | Sign of literal entry                     |
+| DotOn       | 0 / 1          | Whether a decimal point is present        |
+| DotAfter    | 0…Len          | Number of digits before the decimal point |
+
+| Invariant           | Condition                                                                                |
+|---------------------|------------------------------------------------------------------------------------------|
+| Display capacity    | Len + Neg ≤ 10                                                                           |
+| When Neg=1          | Len ≤ 9                                                                                  |
+| When DotOn=0        | DotAfter=0                                                                               |
+| Dot                 | Does not occupy a physical Digit position                                                |
+| Literal Entry zero  | -0 is allowed; canonical mathematical Number never has Neg=1 at zero                     |
+| Entry versus Number | Entry.Hi/Lo are not a normalized Number mantissa and need not begin with a nonzero digit |
+| Default Entry       | Hi=0,Lo=0,Len=1,Neg=0,DotOn=0,DotAfter=0                                                 |
+
+| EntryController command | Precondition                      | Update                                             |
+|-------------------------|-----------------------------------|----------------------------------------------------|
+| 301 Digit               | SingleZero without DotOn, digit>0 | Replace initial 0 with the entered digit; keep Len |
+| 301 Digit               | SingleZero without DotOn, digit=0 | Do not add another leading 0                       |
+| 301 Digit               | Not SingleZero; Len+Neg<10        | Append digit on the right, Len+1                   |
+| 301 Digit               | Len+Neg=10                        | Do not append another digit                        |
+| 303 Dot                 | DotOn=0                           | DotOn=1, DotAfter=Len                              |
+| 303 Dot                 | DotOn=1                           | No change                                          |
+| 306 ToggleSign          | Neg=0 and Len<10                  | Neg=1                                              |
+| 306 ToggleSign          | Neg=0 and Len=10                  | Keep Neg=0                                         |
+| 306 ToggleSign          | Neg=1                             | Neg=0                                              |
+| 307 Backspace           | DotOn=1 and DotAfter=Len          | Remove trailing decimal point, retain digits       |
+| 307 Backspace           | Otherwise                         | Remove last digit, keep Len≥1, preserve Neg        |
+
+funEntryToNum requires valid Len, DotOn, DotAfter; the result must satisfy the Number B4 contract in C§8.
+
+
+------------------------------ 11. EntryState physical storage ------------------------------
+
+
+| B6[i] | Physical storage field | Public field     |
+|-------|------------------------|------------------|
+| 0     | Hi                     | Hi               |
+| 1     | Lo                     | Lo               |
+| 2     | LenRaw                 | Len = LenRaw + 1 |
+| 3     | Neg                    | Neg              |
+| 4     | DotOn                  | DotOn            |
+| 5     | DotAfter               | DotAfter         |
+
+| Condition           | Contract                                                                                          |
+|---------------------|---------------------------------------------------------------------------------------------------|
+| All-zero B6         | Logical Entry: 0, Len=1, no sign or decimal point                                                 |
+| Normal Work=1       | Candidate accepts data; Current is isolated                                                       |
+| Work=0              | Candidate is held; Current accepts Candidate                                                      |
+| Reset=1             | Explicit B6 [0,0,0,0,0,0] with forced writes to Candidate and Current, not just absence of signal |
+| Reset while Work=1  | currentWrite=OR(NOT(work),reset); reset enables Current writing even at Work=1                    |
+| Verified idle reset | One logical tick is sufficient                                                                    |
+| Public outputs      | From Current, not Candidate                                                                       |
+
+
+------------------------------ 12. Frame ------------------------------
+
+
+| Bus    | Size | Slots | Values                       |
+|--------|------|-------|------------------------------|
+| Values | B10  | 0…9   | Character codes 0…9, 100…104 |
+| Dots   | B10  | 0…9   | 0 / 1                        |
+
+| Rule                         | Contract                                                                     |
+|------------------------------|------------------------------------------------------------------------------|
+| Position order               | 0 is leftmost, 9 is rightmost                                                |
+| Decimal point                | Independent Dots[i] attached to the same Values[i]; consumes no new position |
+| ResultRenderer               | Values B10, Dots B10, additional Fits                                        |
+| EntryRenderer, ErrorRenderer | Values B10, Dots B10                                                         |
+| DisplayController            | Selects a pair of buses from one Renderer; does not recalculate digits       |
+
+
+------------------------------ 13. Command B2 ------------------------------
+
+
+| Command B2[i] | Field | Value                                             |
+|---------------|-------|---------------------------------------------------|
+| 0             | Code  | 301…311 for valid commands                        |
+| 1             | Value | 0…9 for Digit; 201…204 for Operation; otherwise 0 |
+
+| Condition            | Contract                                                        |
+|----------------------|-----------------------------------------------------------------|
+| One command          | One B2 packet                                                   |
+| Code extraction      | funFlowDecoder receives scalar Command[0]                       |
+| Execution            | Workers receive the entire B2 through -inB2-cmd                 |
+| Code outside 301…311 | Flow 501 DROP (apart from general Clear 305, which is in range) |
+| Simultaneous presses | Outside normal contract; conflict priority is undefined         |
+
+
+------------------------------ 14. Input group buses ------------------------------
+
+
+| Bus        | i=0 | i=1 | i=2 | i=3 | Remaining                          |
+|------------|-----|-----|-----|-----|------------------------------------|
+| Digits B10 | D0  | D1  | D2  | D3  | 4:D4, 5:D5, 6:D6, 7:D7, 8:D8, 9:D9 |
+| Ops B4     | ADD | SUB | MUL | DIV | —                                  |
+| Ctrl B5    | DOT | EQL | CLR | SGN | 4:BSP                              |
+| Mem B4     | MPL | MMN | MR  | MC  | —                                  |
+
+| Signal                      | Contract                                                                                                   |
+|-----------------------------|------------------------------------------------------------------------------------------------------------|
+| Button level                | 0 / 1                                                                                                      |
+| Button press                | At most one active button at a time in normal operation                                                    |
+| CommandEncoder.-out-capture | OR of all 23 buttons                                                                                       |
+| Delay/repeat                | Single-packet InputController.SyncBuffer, no queue; a held button does not repeat Capture without rearming |
+
+
+------------------------------ 15. ArithmeticState B11 ------------------------------
+
+
+| B11[i] | Field      | Allowed value |
+|--------|------------|---------------|
+| 0      | ResultHi   | Number.Hi     |
+| 1      | ResultLo   | Number.Lo     |
+| 2      | ResultExp  | Number.Exp    |
+| 3      | ResultNeg  | Number.Neg    |
+| 4      | OperandHi  | Number.Hi     |
+| 5      | OperandLo  | Number.Lo     |
+| 6      | OperandExp | Number.Exp    |
+| 7      | OperandNeg | Number.Neg    |
+| 8      | Operation  | 200…204       |
+| 9      | OpPending  | 0 / 1         |
+| 10     | RhsReady   | 0 / 1         |
+
+| Property            | Contract                                                                              |
+|---------------------|---------------------------------------------------------------------------------------|
+| DefaultArithmetic   | [0,0,0,0,0,0,0,0,200,0,0]                                                             |
+| OpPending=1         | An operation with the stored Result remains pending; Operation∈{201,202,203,204}      |
+| RhsReady=1          | Operand contains a new ready RHS not yet applied                                      |
+| RhsReady=0          | Operand may contain an old RHS for repeated =                                         |
+| OpPending=0         | RhsReady=0; after Equals, Operation may remain 201…204                                |
+| Atomic write        | All 11 slots form one internal Candidate B11 and one Current B11                      |
+| Authoritative state | Current only; external B11 is split into two Number B4 values and three scalar fields |
+
+
+------------------------------ 16. MemoryState B4 ------------------------------
+
+
+| MemoryState property | Contract                                       |
+|----------------------|------------------------------------------------|
+| M format             | Number B4, C§8                                 |
+| Startup M            | [0,0,0,0]                                      |
+| Physical storage     | Separate MemoryCandidate B4 / MemoryCurrent B4 |
+| Normal writer        | MemoryController: M+, M−, MC                   |
+| Read-only user       | CalculationController: MR                      |
+| 305 Clear            | M remains unchanged                            |
+| 311 MC               | Writes canonical zero                          |
+| M indicator          | MCurrent.Hi != 0 when Number is canonical      |
+| Public M             | MemoryCurrent only                             |
+
+
+------------------------------ 17. Initial state values ------------------------------
+
+
+| Persistent state | Value after startup             | Storage                                       |
+|------------------|---------------------------------|-----------------------------------------------|
+| Mode             | 401 ENTRY                       | InitMemory ModeCandidate → Memory ModeCurrent |
+| Entry B6         | [0,0,0,0,0,0] (LenRaw=0, Len=1) | EntryState, ordinary BusMemory                |
+| Arithmetic B11   | [0,0,0,0,0,0,0,0,200,0,0]       | InitBusMemory Candidate → BusMemory Current   |
+| M B4             | [0,0,0,0]                       | BusMemory Candidate/Current                   |
+
+| Startup condition          | Contract                                                         |
+|----------------------------|------------------------------------------------------------------|
+| Decoding the first command | State initialization must settle before DecodeDelay=20 completes |
+| Root Valid                 | InputController.Valid, without separate InitReady                |
+| Runtime Clear              | Does not retrigger one-time startup initialization               |
+
+
+============================== OWNERSHIP / STATE ==============================
+
+
+------------------------------ 18. State ownership ------------------------------
+
+
+| State bank          | Sole normal writer                     | Separate reset override                                       |
+|---------------------|----------------------------------------|---------------------------------------------------------------|
+| EntryState B6       | EntryController                        | PreparationController.EntryReset through StateController      |
+| ArithmeticState B11 | CalculationController                  | PreparationController.ArithmeticReset through StateController |
+| MemoryState M B4    | MemoryController                       | No global reset; MC is a normal worker                        |
+| Mode                | StateController during POST/ModeCommit | No separate runtime reset; Clear writes 401 in POST           |
+
+Reset override is a separate permission to control data inputs and Write of the same state memory, not an additional normal writer.
+
+
+------------------------------ 19. Command worker ownership ------------------------------
+
+
+| Code               | Command                           | Sole normal worker    | Modified bank                                   |
+|--------------------|-----------------------------------|-----------------------|-------------------------------------------------|
+| 301, 303, 306, 307 | Digit, Dot, ToggleSign, Backspace | EntryController       | EntryState                                      |
+| 302, 304, 310      | Operation, Equals, MR             | CalculationController | ArithmeticState                                 |
+| 308, 309, 311      | M+, M−, MC                        | MemoryController      | M B4                                            |
+| 305                | Clear                             | None; Flow 504        | PRE resets Entry+Arithmetic, POST sets Mode 401 |
+| Flow 501           | DROP                              | None                  | Unchanged                                       |
+
+| Rule                    | Contract                                                                            |
+|-------------------------|-------------------------------------------------------------------------------------|
+| One command transaction | At most one normal worker                                                           |
+| MemoryRecall 310        | M is read-only; modifies ArithmeticState, so it does not belong to MemoryController |
+| ERROR Mode 403          | All valid user commands except Clear → DROP                                         |
+
+
+------------------------------ 20. Candidate / Current ------------------------------
+
+
+| Bank           | Candidate                                                        | Current                              | Authoritative output |
+|----------------|------------------------------------------------------------------|--------------------------------------|----------------------|
+| Mode           | InitMemory(401), Write=pass(modeWrite)                           | Memory, Write=NOT(modeWrite)         | ModeCurrent          |
+| Arithmetic B11 | InitBusMemory(DefaultArithmetic), Write=OR(arithWork,arithReset) | BusMemory, Write=NOT(arithWork)      | ArithmeticCurrent    |
+| Memory M B4    | BusMemory, Write=pass(memoryWork)                                | BusMemory, Write=NOT(memoryWork)     | MemoryCurrent        |
+| Entry B6       | BusMemory, Write=OR(work,reset)                                  | BusMemory, Write=OR(NOT(work),reset) | EntryCurrent         |
+
+| Phase/condition              | Guarantee                                                                |
+|------------------------------|--------------------------------------------------------------------------|
+| Compute Work=1 without Reset | Candidate may be written; Current preserves old state for readers        |
+| Work falls                   | Candidate freezes; Current begins copying                                |
+| Before CommitDelay ends      | New Current is not yet declared ready for the next transaction           |
+| Commit completed             | New Current is authoritative                                             |
+| Raw ALU Error                | Old Current is forwarded to Candidate instead of invalid arithmetic data |
+| Normal B11/B4 update         | Entire bank is written atomically, not separate fields                   |
+
+
+============================== BEHAVIOR TABLES ==============================
+
+
+------------------------------ 21. Mode × Command → Flow ------------------------------
+
+
+| Command 3xx           | 401 ENTRY     | 402 RESULT      | 403 ERROR |
+|-----------------------|---------------|-----------------|-----------|
+| 301 Digit             | 500 PASS      | 502 BEGIN_ENTRY | 501 DROP  |
+| 302 Operation         | 503 TO_RESULT | 500 PASS        | 501 DROP  |
+| 303 Dot               | 500 PASS      | 502 BEGIN_ENTRY | 501 DROP  |
+| 304 Equals            | 503 TO_RESULT | 500 PASS        | 501 DROP  |
+| 305 Clear             | 504 CLEAR     | 504 CLEAR       | 504 CLEAR |
+| 306 ToggleSign        | 500 PASS      | 502 BEGIN_ENTRY | 501 DROP  |
+| 307 Backspace         | 500 PASS      | 502 BEGIN_ENTRY | 501 DROP  |
+| 308 MemoryAdd (M+)    | 500 PASS      | 500 PASS        | 501 DROP  |
+| 309 MemorySub (M−)    | 500 PASS      | 500 PASS        | 501 DROP  |
+| 310 MemoryRecall (MR) | 503 TO_RESULT | 500 PASS        | 501 DROP  |
+| 311 MemoryClear (MC)  | 500 PASS      | 500 PASS        | 501 DROP  |
+| Code outside 301…311  | 501 DROP      | 501 DROP        | 501 DROP  |
+
+Flow is determined from the input Mode, latched before PRE, and not recalculated after Mode changes in POST.
+
+
+------------------------------ 22. Flow behavior ------------------------------
+
+
+| Flow            | PRE                          | Normal worker | Target Mode without errors | M                  |
+|-----------------|------------------------------|---------------|----------------------------|--------------------|
+| 500 PASS        | No reset                     | Execute 3xx   | Preserve                   | Per worker command |
+| 501 DROP        | No reset                     | None          | Preserve                   | Preserve           |
+| 502 BEGIN_ENTRY | EntryReset                   | Execute 3xx   | 401 ENTRY                  | Preserve           |
+| 503 TO_RESULT   | No reset                     | Execute 3xx   | 402 RESULT                 | Preserve           |
+| 504 CLEAR       | EntryReset + ArithmeticReset | None          | 401 ENTRY                  | Preserve           |
+
+| Condition                    | Contract                                                  |
+|------------------------------|-----------------------------------------------------------|
+| PRE without reset            | PrepDelay=20 still runs                                   |
+| Worker error or Fits in POST | TargetMode becomes 403 ERROR                              |
+| DROP / CLEAR                 | POST, ModeCommit, and GlobalRelease still occur after PRE |
+
+
+------------------------------ 23. Operation behavior (302) ------------------------------
+
+
+Table notation: R — previous Result, O — previous Operand, E — EntryNumber, op — previous Operation, newOp — B2.Value; ALU(X,Y,op) — result of the required arithmetic operation. P = OpPending, Q = RhsReady. = in a cell means a new value; same means unchanged.
+
+| Mode   | P | Q | New Result  | New Operand | Operation | P' | Q' | ALU? |
+|--------|---|---|-------------|-------------|-----------|----|----|------|
+| ENTRY  | 0 | * | E           | E           | newOp     | 1  | 0  | no   |
+| ENTRY  | 1 | * | ALU(R,E,op) | E           | newOp     | 1  | 0  | yes  |
+| RESULT | 0 | * | same R      | R           | newOp     | 1  | 0  | no   |
+| RESULT | 1 | 0 | same R      | same O      | newOp     | 1  | 0  | no   |
+| RESULT | 1 | 1 | ALU(R,O,op) | same O      | newOp     | 1  | 0  | yes  |
+
+* means this value does not affect the branch. Operation 302 accepts only newOp 201…204. In ENTRY, normal Flow=503 changes Mode to RESULT after the worker completes.
+On arithmetic error, SafeNextState B11 = old Current B11 and POST enters ERROR Mode; individual unfinished fields must not be changed.
+
+
+------------------------------ 24. Equals behavior (304) ------------------------------
+
+
+| Mode   | P | Operation | New Result  | New Operand | Operation' | P' | Q' | Effect          |
+|--------|---|-----------|-------------|-------------|------------|----|----|-----------------|
+| ENTRY  | 0 | any       | E           | E           | 200        | 0  | 0  | simply show E   |
+| ENTRY  | 1 | 201…204   | ALU(R,E,op) | E           | same       | 0  | 0  | finish pending  |
+| RESULT | 1 | 201…204   | ALU(R,O,op) | same O      | same       | 0  | 0  | finish pending  |
+| RESULT | 0 | 201…204   | ALU(R,O,op) | same O      | same       | 0  | 0  | repeated Equals |
+| RESULT | 0 | 200       | same R      | same O      | 200        | 0  | 0  | NoOp            |
+
+After an arithmetic Equals, Operation and the last Operand are preserved. With RESULT/P=0/Operation=200, the command leaves ArithmeticState unchanged.
+
+
+------------------------------ 25. MemoryRecall behavior (310) ------------------------------
+
+
+| P | New Result | New Operand | Operation' | P' | Q' | Visible Number after MR |
+|---|------------|-------------|------------|----|----|-------------------------|
+| 1 | same R     | M           | same op    | 1  | 1  | Operand=M               |
+| 0 | M          | M           | 200        | 0  | 0  | Result=M                |
+
+MR does not change M. With P=1 it writes Operand=M and RhsReady=1; arithmetic application is deferred. In ENTRY Flow=503; in RESULT Flow=500.
+
+
+------------------------------ 26. Memory behavior ------------------------------
+
+
+For M+ / M−, the current arithmetic number is selected independently of the display mode:
+
+| Mode   | RhsReady | CurrentNumber                                                        |
+|--------|----------|----------------------------------------------------------------------|
+| ENTRY  | 0 or 1   | EntryNumber                                                          |
+| RESULT | 0        | Result                                                               |
+| RESULT | 1        | Operand                                                              |
+| ERROR  | —        | Memory operations do not run (DROP), except Clear, which preserves M |
+
+| Command   | New M             | Use ALU? | Resulting Mode |
+|-----------|-------------------|----------|----------------|
+| 308 M+    | M + CurrentNumber | yes, 201 | Preserve Mode  |
+| 309 M−    | M − CurrentNumber | yes, 202 | Preserve Mode  |
+| 311 MC    | [0,0,0,0]         | no       | Preserve Mode  |
+| 310 MR    | same M (read)     | no       | See C§25       |
+| 305 Clear | same M            | no       | Mode→ENTRY     |
+
+MemoryController contains its own ArithmeticUnit, not an ALU shared with CalculationController. Raw memory ALU errors preserve old M through SafeM; Sticky Error is captured only after Compute.Done. For MC, UseALU=0.
+
+
+------------------------------ 27. Result / Operand selection ------------------------------
+
+
+| RhsReady | Number for ResultRenderer / Fits | Number for MemoryController in RESULT |
+|----------|----------------------------------|---------------------------------------|
+| 0        | Result B4                        | Result B4                             |
+| 1        | Operand B4                       | Operand B4                            |
+
+This selection does not depend on OpPending. In ENTRY, CurrentNumber for M+/M− is EntryNumber, not ResultNumberSelector.
+
+
+------------------------------ 28. Display selection ------------------------------
+
+
+| Mode         | ResultFits | Output Frame   |
+|--------------|------------|----------------|
+| 401 ENTRY    | —          | EntryRenderer  |
+| 402 RESULT   | 1          | ResultRenderer |
+| 402 RESULT   | 0          | ErrorRenderer  |
+| 403 ERROR    | —          | ErrorRenderer  |
+| Unknown Mode | —          | ErrorRenderer  |
+
+Values B10 and Dots B10 are selected together from one Renderer; mixing Frames from different branches is prohibited. ResultRenderer.Fits also feeds StateController for POST.
+
+
+------------------------------ 29. Error behavior ------------------------------
+
+
+| Event                            | State response                                             | Visible result   |
+|----------------------------------|------------------------------------------------------------|------------------|
+| Active arithmetic raised Error   | Safe B11 = old Current; sticky CalcError after ComputeDone | POST may set 403 |
+| M+/M− raised Error               | Safe M = old Current; sticky MemError after ComputeDone    | POST may set 403 |
+| Inactive ALU branch raised Error | Not treated as a worker error                              | No effect        |
+| RESULT, Fits=0                   | POST selects 403                                           | Error Frame      |
+| Mode=403                         | Every command except 305 → DROP                            | Error Frame      |
+| 305 Clear                        | Reset Entry and Arithmetic, preserve M, Mode=401           | Entry Frame      |
+
+Public worker Error remains latched for the transaction; raw error does not feed StateController.-in-calcErr/-in-memErr directly.
+
+
+------------------------------ 30. Clear and reset behavior ------------------------------
+
+
+| Action               | Entry B6                 | Arithmetic B11    | Mode         | M B4           |
+|----------------------|--------------------------|-------------------|--------------|----------------|
+| 305 Clear / Flow 504 | Default Entry            | DefaultArithmetic | 401 via POST | Unchanged      |
+| Flow 502 BEGIN_ENTRY | Default Entry before 3xx | Unchanged         | 401 via POST | Unchanged      |
+| 311 MC / Flow 500    | Unchanged                | Unchanged         | Unchanged    | Canonical zero |
+| Fresh startup        | Default Entry            | DefaultArithmetic | 401          | Canonical zero |
+
+| Reset type      | Contract                                                                       |
+|-----------------|--------------------------------------------------------------------------------|
+| EntryReset      | Write explicit zero B6 with LenRaw=0; do not confuse no signal with a zero bus |
+| ArithmeticReset | Write exact DefaultArithmetic B11, including Operation=200                     |
+| Clear 305       | Not an ordinary worker command; does not repeat InitMemory startup             |
+| M memory        | Clear/BEGIN_ENTRY do not erase it                                              |
+
+
+============================== PROTOCOLS AND TRANSACTIONS ==============================
+
+
+------------------------------ 31. SyncBuffer protocol ------------------------------
+
+
+| Signal / state | Condition of use / guarantee                                                |
+|----------------|-----------------------------------------------------------------------------|
+| -out-ready=1   | A new packet can be accepted when Capture is active                         |
+| -inB-busData   | Producer ensures data correctness and width before Capture is accepted      |
+| -in-capture    | Captured only once when Ready; held Capture cannot create another packet    |
+| -out-valid=1   | The frozen BusOut has settled; the consumer may read it                     |
+| -out-valid=0   | BusOut is not an authoritative packet                                       |
+| -in-release=1  | Consumer releases the packet after processing; does not mean new Capture    |
+| Capacity       | Exactly one packet; no FIFO/queue                                           |
+| Payload width  | Generic B selected by instance; buses through BusGate are at most 15 slots  |
+| Rearm          | Ready returns after Capture and Release fall and internal locks are cleared |
+
+| Protocol | Transition                                |
+|----------|-------------------------------------------|
+| 1        | Ready → Capture permitted                 |
+| 2        | Capture → close Write and wait for settle |
+| 3        | Valid=1 → consumer uses BusOut            |
+| 4        | Consumer Release → Valid falls            |
+| 5        | Capture=0, Release=0 → Ready restored     |
+
+The generic SyncBuffer uses a bus with no fixed number of slots; its interface does not guarantee the meaning of the payload.
+
+
+------------------------------ 32. ExecTimer protocol ------------------------------
+
+
+| Input / output | Contract                                   |
+|----------------|--------------------------------------------|
+| -in-start      | New Start edge → one execution             |
+| -in-delay      | Integer number of logical ticks, Delay ≥ 5 |
+| -out-done      | One-tick pulse after the configured delay  |
+| Held Start=1   | Does not produce repeated Done             |
+| Next execution | Requires a new Start edge (rearm)          |
+| Delay < 5      | Outside supported contract; do not use     |
+
+
+------------------------------ 33. FeedbackSynchronizer protocol ------------------------------
+
+
+| Input / output | Contract                                                |
+|----------------|---------------------------------------------------------|
+| -in-valid      | Stable root transaction level held until GlobalRelease  |
+| -in-execute    | Authorizes this worker or phase to begin execution      |
+| -in-delay      | Must satisfy ExecTimer.Delay ≥ 5                        |
+| -out-work      | Active compute/write window until the worker phase ends |
+| -out-done      | One-tick timer completion pulse                         |
+| -out-release   | Latched level after Done until Valid=0                  |
+| Execute=0      | Cannot release another worker's command                 |
+| Valid=0        | Clears held Release before the next transaction         |
+
+Done and Release are not interchangeable. One worker's Release does not clear RootValid: only StateController may issue GlobalRelease.
+
+
+------------------------------ 34. Frozen Flow ------------------------------
+
+
+| Stage                       | Guarantee                                         |
+|-----------------------------|---------------------------------------------------|
+| Input Code, Mode, RootValid | Applied to one funFlowDecoder                     |
+| Before DecodeDone           | Raw Flow is not authoritative                     |
+| DecodeDelay=20 completed    | FlowController.SyncBuffer may Capture Flow        |
+| Flow.Valid=1                | Flow 500…504 is frozen for the entire transaction |
+| After Mode commit           | Previously frozen Flow is not recomputed          |
+| GlobalRelease               | Releases FlowBuffer and enables another Decode    |
+
+FlowController public outputs are only -out-flow and -out-valid; it has no -out-ready.
+
+
+------------------------------ 35. Transaction protocol ------------------------------
+
+
+| #  | Phase         | Completion condition / next step                                       |
+|----|---------------|------------------------------------------------------------------------|
+| 1  | Input Capture | InputController.Valid=1: latched Command B2                            |
+| 2  | Decode        | DecodeDelay=20, DecodeDone                                             |
+| 3  | Frozen Flow   | FlowController.Valid=1                                                 |
+| 4  | PRE           | PrepDelay=20, PreparationController.Ready=1                            |
+| 5  | Worker gate   | For 500/502/503 start one worker; for 501/504 start none               |
+| 6  | Compute       | Worker Work=1; Candidate generated; ComputeDone ends the window        |
+| 7  | Commit        | Work↓, Candidate→Current copy; worker Release after CommitDelay        |
+| 8  | POST check    | PostCheckDelay=20; process sticky worker error and Fits                |
+| 9  | Mode commit   | ModeCommitDelay=20; write TargetMode through ModeCandidate→ModeCurrent |
+| 10 | GlobalRelease | Release Input and Frozen Flow; only now can RootValid end              |
+
+| Route                            | Condition                                                                  |
+|----------------------------------|----------------------------------------------------------------------------|
+| RootValid                        | InputController.-out-valid                                                 |
+| MainValid                        | RootValid AND FlowValid AND PreReady AND Flow∈{500,502,503}                |
+| WorkerRelease                    | OR of EntryRelease, CalcRelease, MemRelease; at most one can be active     |
+| ExecDone with Flow∈{500,502,503} | WorkerRelease                                                              |
+| ExecDone with Flow∈{501,504}     | PreReady                                                                   |
+| Mode target                      | Base Mode from Flow; worker Error or ResultFits=0 when target RESULT → 403 |
+| End transaction                  | Not before POST and ModeCommit have completed                              |
+
+
+------------------------------ 36. Transaction invariants ------------------------------
+
+
+| Transaction invariant  | Contract                                                              |
+|------------------------|-----------------------------------------------------------------------|
+| One active transaction | At most one Input/Flow packet at a time                               |
+| One normal worker      | Entry / Calculation / Memory have mutually exclusive commands         |
+| Work / Current         | Current must not be overwritten while Compute Work is active          |
+| Worker completion      | WorkerRelease occurs after its commit, not just raw Done              |
+| Frozen Flow            | Unchanged from Flow.Valid until GlobalRelease                         |
+| Sticky Error           | Held until RootValid ends; available during POST                      |
+| DROP / CLEAR           | Also pass through POST and ModeCommit despite having no normal worker |
+| MainValid              | Does not fall merely on WorkerRelease; RootValid is still maintained  |
+| Next packet            | Only permitted after Release and Input SyncBuffer rearm               |
+
+| SRFlag Set | SRFlag Reset | Result                   |
+|------------|--------------|--------------------------|
+| 0          | 0            | Preserve previous bit    |
+| 1          | 0            | Write 1                  |
+| 0          | 1            | Write 0                  |
+| 1          | 1            | Write 0 (Reset priority) |
+
+
+------------------------------ 37. Startup contract ------------------------------
+
+
+| Startup entity                             | State / guarantee                                                  |
+|--------------------------------------------|--------------------------------------------------------------------|
+| InitMemory                                 | One startup pulse AND(1,NOT(1)); not runtime reset                 |
+| InitBusMemory                              | Same for all bus slots                                             |
+| ModeCandidate                              | InitValue=401                                                      |
+| ArithmeticCandidate B11                    | InitBus=[0,0,0,0,0,0,0,0,200,0,0]                                  |
+| EntryState B6                              | Ordinary physical zero → LenRaw=0 → Len=1                          |
+| M B4                                       | Ordinary physical zero → NumberZero                                |
+| Root Valid                                 | Input.Valid without InitializationController / InitReady           |
+| First command                              | StartupSettleTime < DecodeDelay=20                                 |
+| Changing InitValue / InitBus after startup | Does not overwrite previously initialized memory                   |
+| Runtime Clear                              | Does not generate another startup pulse; uses normal reset signals |
+
+
+============================== ARITHMETIC CONTRACTS ==============================
+
+
+------------------------------ 38. Number normalization ------------------------------
+
+
+| Object               | Condition / guarantee                                                                   |
+|----------------------|-----------------------------------------------------------------------------------------|
+| Number B4, nonzero   | 10000 ≤ Hi ≤ 99999; 0 ≤ Lo ≤ 99999; Neg=0/1                                             |
+| Number B4, zero      | [0,0,0,0]; -0 is not valid as an arithmetic Number                                      |
+| Entry                | Not normalized; -0 allowed before funEntryToNum                                         |
+| funEntryToNum        | Valid Entry → canonical Number                                                          |
+| funMagnitudeOrder    | Compares B4 magnitudes by Exp/Hi/Lo, prioritizing nonzero Number over zero; Neg ignored |
+| funShift25           | shift>0 right, shift<0 left; abs(shift)≥25 → zero B5                                    |
+| funWideSub25         | Input precondition A≥B; otherwise signed difference is undefined                        |
+| funAddSub            | Second sign inverted for Sub; Big/Small selected by magnitude; shifts 1 and expDiff+1   |
+| funNormalizeAddSub25 | Outputs Hi/Lo/Exp/zero; sign is determined by funAddSub                                 |
+| funMul5x5            | Two five-digit chunks; no combined large mantissa in native scalar                      |
+| funMulCore           | Inputs 4 Hi/Lo chunks; result from separate partial products                            |
+| funDivInit           | Handles zero divisor but supplies dHi≠0 to the computation path                         |
+| funDivQHat           | Precondition dHi≠0; no clamp; valid DivPairStep has qHat=0…100                          |
+| funDivMulD           | Precondition qHat=0…100 for the accepted pair pipeline                                  |
+| funDivCorrectR       | Precondition: qHat overestimates by at most 1; one correction; 0≤R<D                    |
+| funDivPairStep       | One two-digit quotient pair and the next remainder                                      |
+| funDivCore           | Six consecutive pair steps; q0…q5                                                       |
+| funPairsToMantissa   | q0…q4 = ten digits; q5 = guard, half-up rounding                                        |
+
+All arithmetic Number inputs must satisfy C§8. Do not use a native 10-digit scalar for Hi|Lo or a native 25-digit scalar for B5.
+
+
+------------------------------ 39. Rounding ------------------------------
+
+
+| Context           | Rule                                                                                                  |
+|-------------------|-------------------------------------------------------------------------------------------------------|
+| funRound, x≥0     | floor(x+0.5) — half-up                                                                                |
+| Arithmetic Number | Result is a canonical Number with up to 10 significant digits                                         |
+| FIXED             | Precision is determined by funPrecision and the string length on 10 physical positions                |
+| SCIENTIFIC        | Precision is determined by sign, Exp digit count, and Exp sign; account for Exp carry during rounding |
+| SCIENTIFIC Fits   | Result may not fit: Fits=0                                                                            |
+| Add/Sub           | 25-digit alignment, normalization, and a half-up guard                                                |
+| Mul               | 19-/20-digit product with normalization and carry to Exp                                              |
+| Div               | Five quotient pairs yield 10 digits; the sixth is the half-up guard                                   |
+| Display rounding  | Never written back to Result, Operand, or M                                                           |
+| Native round      | Not used for project rounding                                                                         |
+
+
+------------------------------ 40. Arithmetic errors ------------------------------
+
+
+| Condition                                                     | Error / guarantee                                                                                     |
+|---------------------------------------------------------------|-------------------------------------------------------------------------------------------------------|
+| Successful result                                             | -999999 ≤ Exp ≤ 999999                                                                                |
+| Exp > 999999                                                  | Arithmetic Error                                                                                      |
+| Exp < -999999                                                 | Arithmetic Error                                                                                      |
+| Divisor = canonical zero                                      | Division-by-zero Error                                                                                |
+| Inactive ALU branch                                           | Its raw error is not a worker error                                                                   |
+| Direct ArithmeticUnit call with Operation=200 or unknown code | ALU outputs invalidOperation=1; code 200 is valid in state but not an operation to execute in the ALU |
+| Worker with UseALU=0                                          | RawCalcError is masked even if an internal inactive ArithmeticUnit reports an error                   |
+| Active worker ALU Error                                       | Candidate is replaced with old Current; public error is latched after ComputeDone                     |
+| RESULT, Fits=0                                                | Representation error: Error Frame and POST Mode=403                                                   |
+| Mode=403                                                      | 301…304,306…311 → 501 DROP; 305 Clear → 504                                                           |
+
+Public worker Error remains latched until Valid=0; StateController POST does not use a raw error pulse.
+
+
+============================== TIMING AND INVARIANTS ==============================
+
+
+------------------------------ 41. Logical timing model ------------------------------
+
+
+| Object / path                                                      | Logical delay                                                                |
+|--------------------------------------------------------------------|------------------------------------------------------------------------------|
+| Physical computational primitive (Valve, Pass, NOT, AND, OR, etc.) | Exactly 1 tick                                                               |
+| Wire / junction / Via / Port                                       | 0 ticks                                                                      |
+| Custom Circuit wrapper                                             | Adds 0 ticks of its own; delay is determined by the internal path            |
+| Serial primitives                                                  | Sum of delays                                                                |
+| Parallel paths                                                     | Critical path is the maximum delay                                           |
+| Constant 1 from Toggle                                             | No separate additional computational delay                                   |
+| TPS=N                                                              | N logical ticks per second; changing TPS scales time, not logical-tick order |
+
+| Condition for Delay usage  | Contract                                                                 |
+|----------------------------|--------------------------------------------------------------------------|
+| Worker ComputeDelay        | Must not be shorter than the confirmed critical path to a safe Candidate |
+| Worker CommitDelay         | Separate from Compute; Done does not mean commit has completed           |
+| FeedbackSynchronizer.Delay | Input to ExecTimer; not identical to total command transaction duration  |
+| Unmeasured paths           | Do not assign invented individual latencies                              |
+
+
+------------------------------ 42. Arithmetic latency ------------------------------
+
+
+Timings for the verified F-functions and the outer ALU selector:
+
+| Function / path | Critical delay, ticks | Note                             |
+|-----------------|-----------------------|----------------------------------|
+| funAdd          | 44                    | through funAddSub(-in-sub=0)     |
+| funSub          | 44                    | through funAddSub(-in-sub=1)     |
+| funMul          | 28                    | exact chunk product              |
+| funDiv          | 176                   | six two-digit steps              |
+| ArithmeticUnit  | +3                    | output selection of result/error |
+| ALU Add Compute | 47                    | 44+3                             |
+| ALU Sub Compute | 47                    | 44+3                             |
+| ALU Mul Compute | 31                    | 28+3                             |
+| ALU Div Compute | 179                   | 176+3                            |
+
+Measured helper function paths F (for reconstructing critical paths):
+
+| F                    | Ticks | F                 | Ticks |
+|----------------------|-------|-------------------|-------|
+| funMagnitudeOrder    | 7     | funMul5x5         | 10    |
+| funShift25           | 8     | funMulCore        | 17    |
+| funWideAdd25         | 6     | funMulNormalize10 | 7     |
+| funWideSub25         | 5     | funDivInit        | 11    |
+| funLeadingPosition25 | 5     | funDivQHat        | 4     |
+| funNormalizeAddSub25 | 18    | funDivMulD        | 6     |
+| funAddSub            | 44    | funDivCorrectR    | 11    |
+| funPairsToMantissa   | 9     | funDivNextX       | 6     |
+| funDivPairStep       | 27    | funDivCore        | 156   |
+
+Some display/Entry functions in F have no individually measured latency. Do not assign invented tick counts; these paths use conservative stage windows or require separate measurement. Total elapsed time in the physical calculator depends on the whole phase sequence, not just ALU.
+
+
+------------------------------ 43. Controller timing ------------------------------
+
+
+| Subsystem/window                  | Delay, ticks    | Type / important rule                         |
+|-----------------------------------|-----------------|-----------------------------------------------|
+| InputController SyncBuffer        | settle protocol | no separate fixed worker Delay                |
+| FlowController DecodeSync         | 20              | before Frozen Flow capture                    |
+| PreparationController PrepSync    | 20              | even for a Flow with no reset                 |
+| EntryController Compute           | 20              | conservative, not claimed as minimum          |
+| CalculationController non-ALU     | 20              | Operation without ALU / Equals no-op / MR     |
+| CalculationController ALU Add/Sub | 47              | F 44 + ALU selection 3                        |
+| CalculationController ALU Mul     | 31              | F 28 + ALU selection 3                        |
+| CalculationController ALU Div     | 179             | F 176 + ALU selection 3                       |
+| CalculationController Commit      | 20              | Current state settling before worker Release  |
+| MemoryController Compute M+/M−/MC | 47              | one Delay for all three commands              |
+| MemoryController Commit           | 5               | minimum safe timer delay, physically verified |
+| StateController POST-check        | 20              | latch WorkerError/Fits after worker           |
+| StateController ModeCommit        | 20              | Mode Candidate/Current                        |
+| Minimum ExecTimer Delay           | 5               | universal calling requirement                 |
+
+Keep separate: Function critical latency, ComputeSync.Delay, CommitSync.Delay, and the end-to-end duration of the complete command transaction (including Decode/Prep/Post and packet settling). They cannot be replaced by one number. MemoryController Commit=5, NOT 20; CalculationController Commit=20. POST/ModeCommit also run for DROP/CLEAR even if the normal worker is skipped.
+
+
+------------------------------ 44. Global invariants ------------------------------
+
+
+| End-to-end rule         | Normative consequence                                                           |
+|-------------------------|---------------------------------------------------------------------------------|
+| Codes                   | Only those in C§2–7; Mode (4xx) is not Flow (5xx)                               |
+| States                  | Public results always come from Current, not Candidate                          |
+| Normal writers          | Exactly one normal writer per state bank                                        |
+| Command transaction     | At most one active command packet at a time                                     |
+| Flow                    | Frozen until the current transaction ends                                       |
+| Worker                  | At most one normal worker per command                                           |
+| Bank atomicity          | Arithmetic B11 and Memory B4 cannot be committed in parts                       |
+| Error                   | Safe Candidate + sticky worker Error; POST after worker completion              |
+| Reset                   | Clear does not change M; MC does not change Arithmetic or Entry                 |
+| Number input            | Must be canonical before arithmetic functions                                   |
+| Hardware timing         | One primitive = one tick; all stage delays must be accounted for                |
+| Physical scene boundary | 23 button inputs; ten Digits (value/dot); separate Indicator                    |
+| Frame selection         | B10 Values and B10 Dots come from the same Renderer                             |
+| wire(...)               | Physically joins wires; not a replacement for OR or arithmetic addition         |
+| One-time initialization | Startup InitMemory/InitBusMemory is separate from runtime reset                 |
+| Unknown Mode            | DisplayController uses Error Frame; unknown Code → DROP, except valid Clear 305 |
+| Generic BusGate reuse   | Width at most 15 slots; separate Valve per slot; scalar uses slot 0             |
+
+Exact public ports and physical Circuit algorithms are defined in modules_en.txt; each fun-function is implemented in functions_en.txt.

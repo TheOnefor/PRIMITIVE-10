@@ -1,0 +1,1646 @@
+====================================== DISPLAY / SHARED ======================================
+
+-------------------------------------- funChunkDigits --------------------------------------
+
+Purpose:
+Split a five-digit chunk into five individual decimal digits.
+
+Inputs:
+-in-in
+
+Outputs:
+-out-d0
+-out-d1
+-out-d2
+-out-d3
+-out-d4
+
+Timing:
+Not measured separately.
+
+Algorithm:
+-out-d0 = floor((-in-in) / 10000) % 10
+-out-d1 = floor((-in-in) / 1000) % 10
+-out-d2 = floor((-in-in) / 100) % 10
+-out-d3 = floor((-in-in) / 10) % 10
+-out-d4 = floor(-in-in) % 10
+
+Principle:
+Always returns five positions, including leading zeros.
+
+
+-------------------------------------- funDisplayMode --------------------------------------
+
+Purpose:
+Determine whether a Number can be displayed in FIXED or requires SCIENTIFIC.
+
+Inputs:
+-in-exp
+-in-neg
+
+Outputs:
+-out-fixed
+-out-scientific
+
+Timing:
+Not measured separately.
+
+Algorithm:
+limit = 9 - (-in-neg)
+-out-fixed = ((-in-exp) >= -limit) × ((-in-exp) <= limit)
+-out-scientific = 1 - (-out-fixed)
+
+Principle:
+The number's sign occupies one of the ten physical display positions.
+
+
+-------------------------------------- funPrecision --------------------------------------
+
+Purpose:
+Determine the maximum number of significant digits that fit in FIXED.
+
+Inputs:
+-in-exp
+-in-neg
+
+Outputs:
+-out-keep
+
+Timing:
+Not measured separately.
+
+Algorithm:
+base = 10 - (-in-neg)
+isNegativeExp = (-in-exp) < 0
+-out-keep = base + (-in-exp) × isNegativeExp
+
+Principle:
+For a negative Exp, leading 0.00... characters occupy physical positions and reduce available precision.
+
+
+-------------------------------------- funRound --------------------------------------
+
+Purpose:
+Perform half-up rounding for a nonnegative value.
+
+Inputs:
+in
+
+Outputs:
+out
+
+Timing:
+Not measured separately.
+
+Algorithm:
+out = floor(in + 0.5)
+
+Principle:
+Used instead of native round, whose behavior is not accepted as the project's rounding contract.
+
+
+-------------------------------------- funRoundNumber --------------------------------------
+
+Purpose:
+Round the ten-digit Hi|Lo mantissa to a specified number of significant digits without combining Hi and Lo into one native number.
+
+Inputs:
+-in-hi
+-in-lo
+-in-keep
+
+Outputs:
+-out-hi
+-out-lo
+-out-expAdd
+
+Timing:
+Not measured separately.
+
+Algorithm:
+keepGt5 = (-in-keep) > 5
+keepEq5 = (-in-keep) == 5
+keepLt5 = (-in-keep) < 5
+
+dropLo = 10 - (-in-keep)
+factorLo = 10^dropLo
+roundedLo = funRound((-in-lo) / factorLo) × factorLo
+carryGt5 = floor(roundedLo / 100000)
+hiGt5 = (-in-hi) + carryGt5
+loGt5 = roundedLo % 100000
+
+carryEq5 = (-in-lo) >= 50000
+hiEq5 = (-in-hi) + carryEq5
+loEq5 = 0
+
+factorHi = 10^(5 - (-in-keep))
+hiLt5 = funRound((-in-hi) / factorHi) × factorHi
+loLt5 = 0
+
+hi1 = hiGt5 × keepGt5 + hiEq5 × keepEq5 + hiLt5 × keepLt5
+lo1 = loGt5 × keepGt5 + loEq5 × keepEq5 + loLt5 × keepLt5
+
+overflow = hi1 >= 100000
+-out-hi = 10000 × overflow + hi1 × (1 - overflow)
+-out-lo = lo1 × (1 - overflow)
+-out-expAdd = overflow
+
+Principle:
+Rounding is performed separately on Hi/Lo; the value Hi×100000+Lo is never physically constructed.
+
+
+-------------------------------------- funTrailingZeros5 --------------------------------------
+
+Purpose:
+Count consecutive trailing zeros in a five-digit chunk.
+
+Inputs:
+-in-in
+
+Outputs:
+-out-zeros
+
+Timing:
+Not measured separately.
+
+Algorithm:
+z1 = ((-in-in) % 10) == 0
+z2 = ((-in-in) % 100) == 0
+z3 = ((-in-in) % 1000) == 0
+z4 = ((-in-in) % 10000) == 0
+z5 = (-in-in) == 0
+-out-zeros = z1 + z2 + z3 + z4 + z5
+
+Principle:
+Counts trailing zeros only, not all zeros inside the chunk.
+
+
+-------------------------------------- funTrimZeros --------------------------------------
+
+Purpose:
+Determine how many significant digits actually need to be displayed after rounding a FIXED result.
+
+Inputs:
+-in-hi
+-in-lo
+-in-exp
+
+Outputs:
+-out-keep
+
+Timing:
+Not measured separately.
+
+Algorithm:
+hiZeros = funTrailingZeros5(-in-hi)
+loZeros = funTrailingZeros5(-in-lo)
+totalZeros = loZeros + hiZeros × ((-in-lo) == 0)
+sigKeep = 10 - totalZeros
+minKeep = max((-in-exp) + 1, 1)
+-out-keep = max(sigKeep, minKeep)
+
+Principle:
+Removes only unnecessary trailing zeros while retaining zeros needed for correct decimal-point placement.
+
+
+-------------------------------------- funFixedMeta --------------------------------------
+
+Purpose:
+Calculate the coordinates of the FIXED display layout.
+
+Inputs:
+-in-exp
+-in-neg
+-in-keep
+
+Outputs:
+-out-start
+-out-sigStart
+-out-dotPos
+-out-dotOn
+
+Timing:
+Not measured separately.
+
+Algorithm:
+small = (-in-exp) < 0
+-out-sigStart = 10 - (-in-keep)
+-out-start = (-out-sigStart) + (-in-exp) × small - (-in-neg)
+-out-dotPos = (-out-sigStart) + (-in-exp)
+-out-dotOn = (-in-keep) > ((-in-exp) + 1)
+
+Principle:
+This function does not produce display characters; it only determines FIXED representation positions.
+
+
+-------------------------------------- funMantissaDigit --------------------------------------
+
+Purpose:
+Extract a digit of the ten-digit Hi|Lo mantissa at index 0...9.
+
+Inputs:
+-in-hi
+-in-lo
+-in-index
+
+Outputs:
+-out-digit
+
+Timing:
+Not measured separately.
+
+Algorithm:
+hiDigits = funChunkDigits(-in-hi)
+loDigits = funChunkDigits(-in-lo)
+
+For i = 0...4:
+    valveHi[i] = ((-in-index) == i)
+    valveLo[i] = ((-in-index) == i+5)
+
+-out-digit = OR(
+    valveHi[0..4] pass hiDigits[0..4],
+    valveLo[0..4] pass loDigits[0..4]
+)
+
+Principle:
+Ten controlled Valves select the requested digit. Exactly one Valve is open for a valid index; outside the range all are closed and the output is 0.
+
+
+-------------------------------------- funFixedCell --------------------------------------
+
+Purpose:
+Produce Value and Dot for one physical position of the FIXED display.
+
+Inputs:
+-in-hi
+-in-lo
+-in-start
+-in-sigStart
+-in-dotPos
+-in-dotOn
+-in-neg
+-in-pos
+
+Outputs:
+-out-value
+-out-dot
+
+Timing:
+Not measured separately.
+
+Algorithm:
+blank = (-in-pos) < (-in-start)
+minus = ((-in-pos) == (-in-start)) × (-in-neg)
+mantissa = (-in-pos) >= (-in-sigStart)
+index = (-in-pos) - (-in-sigStart)
+digit = funMantissaDigit(-in-hi, -in-lo, index)
+
+-out-value = blank × 100 + minus × 101 + digit × mantissa
+-out-dot = ((-in-pos) == (-in-dotPos)) × (-in-dotOn)
+
+Principle:
+The cell independently determines whether its position contains Blank, Minus, a mantissa digit, or an intermediate zero.
+
+
+-------------------------------------- funExponentMeta --------------------------------------
+
+Purpose:
+Obtain the exponent's sign, magnitude, and number of decimal digits.
+
+Inputs:
+-in-exp
+
+Outputs:
+-out-absExp
+-out-expNeg
+-out-expDigits
+
+Timing:
+Not measured separately.
+
+Algorithm:
+-out-absExp = abs(-in-exp)
+-out-expNeg = (-in-exp) < 0
+
+-out-expDigits =
+    1 +
+    ((-out-absExp) >= 10) +
+    ((-out-absExp) >= 100) +
+    ((-out-absExp) >= 1000) +
+    ((-out-absExp) >= 10000) +
+    ((-out-absExp) >= 100000) +
+    ((-out-absExp) >= 1000000) +
+    ((-out-absExp) >= 10000000)
+
+Principle:
+Exponent metadata is used to build the SCIENTIFIC string from right to left.
+
+
+-------------------------------------- funScientificPrecision --------------------------------------
+
+Purpose:
+Determine the maximum mantissa precision available in SCIENTIFIC.
+
+Inputs:
+-in-neg
+-in-expNeg
+-in-expDigits
+
+Outputs:
+-out-keep
+-out-fits
+
+Timing:
+Not measured separately.
+
+Algorithm:
+-out-keep = 9 - (-in-neg) - (-in-expNeg) - (-in-expDigits)
+-out-fits = (-out-keep) >= 1
+
+Principle:
+The number's sign, E, exponent sign, and exponent digits are subtracted from the ten available positions.
+
+
+-------------------------------------- funScientificRound --------------------------------------
+
+Purpose:
+Round a Number for SCIENTIFIC, rechecking whether it fits after a possible exponent change.
+
+Inputs:
+-in-hi
+-in-lo
+-in-exp
+-in-neg
+
+Outputs:
+-out-hi
+-out-lo
+-out-exp
+-out-maxKeep
+-out-fits
+
+Timing:
+Not measured separately.
+
+Algorithm:
+meta1 = funExponentMeta(-in-exp)
+prec1 = funScientificPrecision(-in-neg, meta1.expNeg, meta1.expDigits)
+safeKeep1 = max(prec1.keep, 1)
+
+round1 = funRoundNumber(-in-hi, -in-lo, safeKeep1)
+candidateExp = (-in-exp) + round1.expAdd
+
+meta2 = funExponentMeta(candidateExp)
+prec2 = funScientificPrecision(-in-neg, meta2.expNeg, meta2.expDigits)
+safeKeep2 = max(prec2.keep, 1)
+
+finalKeep = min(safeKeep1, safeKeep2)
+round2 = funRoundNumber(-in-hi, -in-lo, finalKeep)
+
+-out-hi = round2.hi
+-out-lo = round2.lo
+-out-exp = (-in-exp) + round2.expAdd
+-out-maxKeep = finalKeep
+-out-fits = prec2.fits
+
+Principle:
+If rounding increases the exponent's digit count, available precision decreases; previously discarded precision is not restored.
+
+
+-------------------------------------- funScientificTrim --------------------------------------
+
+Purpose:
+Remove unnecessary trailing zeros from the SCIENTIFIC mantissa without exceeding the previously calculated precision limit.
+
+Inputs:
+-in-hi
+-in-lo
+-in-maxKeep
+
+Outputs:
+-out-keep
+
+Timing:
+Not measured separately.
+
+Algorithm:
+hiZeros = funTrailingZeros5(-in-hi)
+loZeros = funTrailingZeros5(-in-lo)
+totalZeros = loZeros + hiZeros × ((-in-lo) == 0)
+naturalKeep = 10 - totalZeros
+-out-keep = max(min(naturalKeep, -in-maxKeep), 1)
+
+Principle:
+SCIENTIFIC displays no more than maxKeep digits and omits unnecessary trailing zeros.
+
+
+-------------------------------------- funScientificMeta --------------------------------------
+
+Purpose:
+Calculate the SCIENTIFIC layout coordinates.
+
+Inputs:
+-in-sigKeep
+-in-neg
+-in-expNeg
+-in-expDigits
+
+Outputs:
+-out-start
+-out-sigStart
+-out-ePos
+-out-expStart
+-out-dotOn
+
+Timing:
+Not measured separately.
+
+Algorithm:
+-out-expStart = 10 - (-in-expDigits)
+-out-ePos = (-out-expStart) - 1 - (-in-expNeg)
+-out-sigStart = (-out-ePos) - (-in-sigKeep)
+-out-start = (-out-sigStart) - (-in-neg)
+-out-dotOn = (-in-sigKeep) > 1
+
+Principle:
+The exponent always ends at position 9; the rest of the SCIENTIFIC string is built from right to left.
+
+
+-------------------------------------- funExponentDigit --------------------------------------
+
+Purpose:
+Get an exponent digit for a given physical display position.
+
+Inputs:
+-in-absExp
+-in-expStart
+-in-pos
+
+Outputs:
+-out-digit
+
+Timing:
+Not measured separately.
+
+Algorithm:
+active = (-in-pos) >= (-in-expStart)
+place = (9 - (-in-pos)) × active
+digitRaw = floor((-in-absExp) / 10^place) % 10
+-out-digit = digitRaw × active
+
+Principle:
+The exponent is right-aligned and always ends at position 9.
+
+
+-------------------------------------- funScientificCell --------------------------------------
+
+Purpose:
+Produce Value and Dot for one physical position of the SCIENTIFIC display.
+
+Inputs:
+-in-hi
+-in-lo
+-in-absExp
+-in-start
+-in-sigStart
+-in-ePos
+-in-expStart
+-in-dotOn
+-in-pos
+
+Outputs:
+-out-value
+-out-dot
+
+Timing:
+Not measured separately.
+
+Algorithm:
+blank = (-in-pos) < (-in-start)
+numberMinus = ((-in-pos) == (-in-start)) × ((-in-start) < (-in-sigStart))
+mantissa = ((-in-pos) >= (-in-sigStart)) × ((-in-pos) < (-in-ePos))
+mantissaIndex = (-in-pos) - (-in-sigStart)
+mantissaDigit = funMantissaDigit(-in-hi, -in-lo, mantissaIndex)
+e = (-in-pos) == (-in-ePos)
+expMinus = ((-in-pos) > (-in-ePos)) × ((-in-pos) < (-in-expStart))
+exponentDigit = funExponentDigit(-in-absExp, -in-expStart, -in-pos)
+
+-out-value =
+    blank × 100 +
+    numberMinus × 101 +
+    mantissaDigit × mantissa +
+    e × 102 +
+    expMinus × 101 +
+    exponentDigit
+
+-out-dot = ((-in-pos) == (-in-sigStart)) × (-in-dotOn)
+
+Principle:
+One Cell determines whether its position contains Blank, a number sign, a mantissa digit, E, an exponent sign, or an exponent digit.
+
+
+====================================== ENTRY / FLOW ======================================
+
+-------------------------------------- funEntryCell --------------------------------------
+
+Purpose:
+Produce Value and Dot for one physical position of the literal Entry.
+
+Inputs:
+-inB5-hiDigits
+-inB5-loDigits
+-in-len
+-in-neg
+-in-dotOn
+-in-dotAfter
+-in-pos
+
+Outputs:
+-out-value
+-out-dot
+
+Timing:
+Not measured separately.
+
+Algorithm:
+digitStart = 10 - (-in-len)
+entryIndex = (-in-pos) - digitStart
+
+isDigit = (-in-pos) >= digitStart
+minus = (-in-neg) × ((-in-pos) == digitStart - 1)
+blank = ((-in-pos) < digitStart) × (1 - minus)
+
+hiShift = max(5 - (-in-len), 0)
+hiIndex = entryIndex + hiShift
+loIndex = entryIndex + 5 - (-in-len)
+
+hiDigit =
+    (-inB5-hiDigits)[0] × (hiIndex == 0) +
+    (-inB5-hiDigits)[1] × (hiIndex == 1) +
+    (-inB5-hiDigits)[2] × (hiIndex == 2) +
+    (-inB5-hiDigits)[3] × (hiIndex == 3) +
+    (-inB5-hiDigits)[4] × (hiIndex == 4)
+
+loDigit =
+    (-inB5-loDigits)[0] × (loIndex == 0) +
+    (-inB5-loDigits)[1] × (loIndex == 1) +
+    (-inB5-loDigits)[2] × (loIndex == 2) +
+    (-inB5-loDigits)[3] × (loIndex == 3) +
+    (-inB5-loDigits)[4] × (loIndex == 4)
+
+digit = hiDigit × (entryIndex < 5) + loDigit × (entryIndex >= 5)
+
+-out-value = blank × 100 + minus × 101 + digit × isDigit
+
+dotPos = digitStart + (-in-dotAfter) - 1
+-out-dot = (-in-dotOn) × ((-in-pos) == dotPos)
+
+Principle:
+Entry is right-aligned; Len counts actual entered digits, the sign sits immediately to the left of the first digit, and the decimal point takes no separate position.
+
+
+-------------------------------------- funLeadingZeros5 --------------------------------------
+
+Purpose:
+Count consecutive leading zeros in a five-digit chunk.
+
+Inputs:
+-in-in
+
+Outputs:
+-out-zeros
+
+Timing:
+Not measured separately.
+
+Algorithm:
+-out-zeros =
+    ((-in-in) < 10000) +
+    ((-in-in) < 1000) +
+    ((-in-in) < 100) +
+    ((-in-in) < 10) +
+    ((-in-in) < 1)
+
+Principle:
+For a value of 0, returns 5; for a nonzero value returns the position of its first significant digit within the five-digit chunk.
+
+
+-------------------------------------- funEntryToNum --------------------------------------
+
+Purpose:
+Convert a literal Entry into a canonical Number.
+
+Inputs:
+-in-hi
+-in-lo
+-in-len
+-in-neg
+-in-dotOn
+-in-dotAfter
+
+Outputs:
+-out-hi
+-out-lo
+-out-exp
+-out-neg
+
+Timing:
+Not measured separately.
+
+Algorithm:
+hiShift = max(5 - (-in-len), 0)
+packedHi = (-in-hi) × 10^hiShift
+
+long = (-in-len) > 5
+loShift = max(10 - (-in-len), 0)
+packedLo = (-in-lo) × 10^loShift × long
+
+lzHi = funLeadingZeros5(packedHi)
+lzLo = funLeadingZeros5(packedLo)
+hiZero = packedHi == 0
+
+firstSig = lzHi + hiZero × lzLo
+
+decimalAfter = (-in-len) - (-in-dotOn) × ((-in-len) - (-in-dotAfter))
+rawExp = decimalAfter - firstSig - 1
+
+zero = (packedHi == 0) × (packedLo == 0)
+notZero = 1 - zero
+
+caseA = firstSig < 5
+sA = firstSig
+factorA = 10^(5 - sA)
+hiA = packedHi × 10^sA + floor(packedLo / factorA)
+loA = (packedLo % factorA) × 10^sA
+
+sB = firstSig - 5
+hiB = packedLo × 10^sB
+loB = 0
+
+-out-hi = (hiA × caseA + hiB × (1 - caseA)) × notZero
+-out-lo = (loA × caseA + loB × (1 - caseA)) × notZero
+-out-exp = rawExp × notZero
+-out-neg = (-in-neg) × notZero
+
+Principle:
+Entry is first packed to the left, then normalized by the first significant digit; any numeric zero becomes canonical 0|0|0|0.
+
+
+-------------------------------------- funFlowDecoder --------------------------------------
+
+Purpose:
+Determine FlowCode combinationally from the current Mode and Code.
+
+Inputs:
+-in-code
+-in-mode
+
+Outputs:
+-out-flow
+
+Timing:
+Not measured separately.
+
+Algorithm:
+entry = (-in-mode) == 401
+result = (-in-mode) == 402
+error = (-in-mode) == 403
+
+validCode = ((-in-code) >= 301) × ((-in-code) <= 311)
+clear = (-in-code) == 305
+entryCommands = ((-in-code)==301) OR ((-in-code)==303) OR
+                ((-in-code)==306) OR ((-in-code)==307)
+resultCommands = ((-in-code)==302) OR ((-in-code)==304) OR
+                 ((-in-code)==310)
+
+beginEntry = result × entryCommands
+toResult = entry × resultCommands
+execute = validCode × (entry OR result) × (1-clear)
+pass = execute × (1-beginEntry) × (1-toResult)
+drop = 1 - clear - beginEntry - toResult - pass
+
+-out-flow = 504×clear + 502×beginEntry + 503×toResult +
+            500×pass + 501×drop
+
+Principle:
+Codes 308 and 309 are not tested separately: they fall within the overall valid range 301...311. In ERROR, all commands except 305 are dropped; codes outside the range produce DROP.
+
+
+====================================== ADDITION / SUBTRACTION ======================================
+
+-------------------------------------- funAdd --------------------------------------
+
+Purpose:
+Add two Numbers.
+
+Inputs:
+-inB4-a
+-inB4-b
+
+Outputs:
+-outB4-result
+-out-error
+
+Timing:
+44 logical ticks.
+
+Algorithm:
+-outB4-result = funAddSub(-inB4-a, -inB4-b, 0).result
+-out-error = funAddSub(-inB4-a, -inB4-b, 0).error
+
+Principle:
+Thin wrapper around funAddSub with -in-sub=0.
+
+
+-------------------------------------- funSub --------------------------------------
+
+Purpose:
+Subtract two Numbers.
+
+Inputs:
+-inB4-a
+-inB4-b
+
+Outputs:
+-outB4-result
+-out-error
+
+Timing:
+44 logical ticks.
+
+Algorithm:
+-outB4-result = funAddSub(-inB4-a, -inB4-b, 1).result
+-out-error = funAddSub(-inB4-a, -inB4-b, 1).error
+
+Principle:
+Thin wrapper around funAddSub with -in-sub=1.
+
+
+-------------------------------------- funMagnitudeOrder --------------------------------------
+
+Purpose:
+Order two Numbers by absolute magnitude.
+
+Inputs:
+-inB4-a
+-inB4-b
+
+Outputs:
+-outB4-big
+-outB4-small
+
+Timing:
+7 logical ticks.
+
+Algorithm:
+aHi = (-inB4-a)[0]
+aLo = (-inB4-a)[1]
+aExp = (-inB4-a)[2]
+
+bHi = (-inB4-b)[0]
+bLo = (-inB4-b)[1]
+bExp = (-inB4-b)[2]
+
+baseIsBig =
+    (aExp > bExp) +
+    (aExp == bExp) × (aHi > bHi) +
+    (aExp == bExp) × (aHi == bHi) × (aLo >= bLo)
+
+aNonZero = (aHi != 0)
+bZero = (bHi == 0)
+
+aIsBig = (baseIsBig AND aNonZero) OR bZero
+bIsBig = NOT(aIsBig)
+
+busGate(-inB4-a, aIsBig).out → -outB4-big
+busGate(-inB4-b, bIsBig).out → -outB4-big
+
+busGate(-inB4-b, aIsBig).out → -outB4-small
+busGate(-inB4-a, bIsBig).out → -outB4-small
+
+Principle:
+Nonzero Numbers are compared by Exp, then Hi and Lo. Neg does not affect magnitude ordering, but passes through unchanged in the selected B4 values.
+Canonical zero is detected by Hi=0. The ordinary comparison result is gated through AND with aHi!=0, then OR with bHi==0 ensures correct Big selection for zero operands. Ties select A.
+
+
+-------------------------------------- funShift25 --------------------------------------
+
+Purpose:
+Shift a 25-digit decimal B5 value by an arbitrary number of decimal positions within the working field.
+
+Inputs:
+-inB5-value
+-in-shift
+
+Outputs:
+-outB5-result
+
+Timing:
+8 logical ticks.
+
+Algorithm:
+B = 100000
+c0 = (-inB5-value)[0]
+c1 = (-inB5-value)[1]
+c2 = (-inB5-value)[2]
+c3 = (-inB5-value)[3]
+c4 = (-inB5-value)[4]
+
+s = abs(-in-shift)
+far = s >= 25
+k = floor(s / 5)
+r = s % 5
+p = 10^r
+q = 10^(5 - r)
+
+For (-in-shift) >= 0 (right shift):
+right[i] = floor(c[i-k] / p) + (c[i-k-1] % p) × q
+
+For (-in-shift) < 0 (left shift):
+left[i] = ((c[i+k] × p) % B) + floor(c[i+k+1] / q)
+
+c[j] = 0 for j outside 0...4
+
+-outB5-result[i] =
+    (right[i] × ((-in-shift) >= 0) +
+     left[i] × ((-in-shift) < 0)) × (1 - far)
+
+Principle:
+A positive shift moves the decimal sequence right; a negative shift moves it left. Digits outside the 25-digit field are discarded.
+
+
+-------------------------------------- funWideAdd25 --------------------------------------
+
+Purpose:
+Add two unsigned 25-digit B5 values using parallel-computed carry conditions.
+
+Inputs:
+-inB5-a
+-inB5-b
+
+Outputs:
+-outB5-result
+
+Timing:
+6 logical ticks.
+
+Algorithm:
+B = 100000
+
+For i=0..4:
+    s[i] = (-inB5-a)[i] + (-inB5-b)[i]
+    g[i] = (s[i] >= B)
+    p[i] = (s[i] >= B-1)
+
+Here i=4 is the least significant chunk. Carry look-ahead:
+c[4] = 0
+c[3] = g[4]
+c[2] = g[3] OR (p[3] AND g[4])
+c[1] = g[2] OR (p[2] AND g[3]) OR (p[2] AND p[3] AND g[4])
+c[0] = g[1] OR (p[1] AND g[2]) OR
+       (p[1] AND p[2] AND g[3]) OR
+       (p[1] AND p[2] AND p[3] AND g[4])
+
+For i=0..4:
+    -outB5-result[i] = (s[i] + c[i]) % B
+
+Principle:
+Carries are computed with generate/propagate and OR/AND combinations, without a serial dependency from each resulting chunk to the preceding one. Carry beyond 25 digits is discarded.
+
+
+-------------------------------------- funWideSub25 --------------------------------------
+
+Purpose:
+Subtract B from A in a 25-digit B5 using parallel-computed borrow conditions.
+
+Inputs:
+-inB5-a
+-inB5-b
+
+Outputs:
+-outB5-result
+
+Timing:
+5 logical ticks.
+
+Algorithm:
+B = 100000
+
+For i=1..4:
+    g[i] = ((-inB5-a)[i] < (-inB5-b)[i])
+For i=1..3:
+    p[i] = ((-inB5-a)[i] == (-inB5-b)[i])
+
+Here i=4 is the least significant chunk. Borrow look-ahead:
+b[4] = 0
+b[3] = g[4]
+b[2] = g[3] OR (p[3] AND g[4])
+b[1] = g[2] OR (p[2] AND g[3]) OR (p[2] AND p[3] AND g[4])
+b[0] = g[1] OR (p[1] AND g[2]) OR
+       (p[1] AND p[2] AND g[3]) OR
+       (p[1] AND p[2] AND p[3] AND g[4])
+
+For i=0..4:
+    -outB5-result[i] = ((-inB5-a)[i] - (-inB5-b)[i] - b[i] + B) % B
+
+Principle:
+Positions in A and B are compared in parallel first; then borrows are combined from g/p conditions. This function is used with A>=B; when A<B, the result's sign is not calculated here.
+
+
+-------------------------------------- funLeadingPosition25 --------------------------------------
+
+Purpose:
+Find the position of the first nonzero digit in five base-100000 chunks and determine zero.
+
+Inputs:
+-inB5-value
+
+Outputs:
+-out-p
+-out-zero
+
+Timing:
+5 logical ticks.
+
+Algorithm:
+For i=0..4:
+    chunk[i] = (-inB5-value)[i]
+    z[i] = NOT(chunk[i])          // chunk equals 0
+    n[i] = OR(chunk[i])           // chunk is not 0
+    lz[i] = funLeadingZeros5(chunk[i])
+
+g0 = n[0]
+g1 = z[0] AND n[1]
+g2 = z[0] AND z[1] AND n[2]
+g3 = z[0] AND z[1] AND z[2] AND n[3]
+g4 = z[0] AND z[1] AND z[2] AND z[3] AND n[4]
+
+-out-zero = z[0] AND z[1] AND z[2] AND z[3] AND z[4]
+-out-p = g0×lz[0] + g1×(5+lz[1]) + g2×(10+lz[2]) +
+         g3×(15+lz[3]) + g4×(20+lz[4]) + 25×(-out-zero)
+
+Principle:
+The actual output in the circuit is named p, not n. AND/NOT/OR masks select only the first nonzero chunk; for an all-zero value, p=25 and zero=1.
+
+
+-------------------------------------- funNormalizeAddSub25 --------------------------------------
+
+Purpose:
+Convert a 25-digit B5 result into normalized Hi/Lo, Exp and Zero.
+
+Inputs:
+-inB5-value
+-in-bigExp
+
+Outputs:
+-out-hi
+-out-lo
+-out-exp
+-out-zero
+
+Timing:
+18 logical ticks.
+
+Algorithm:
+lead = funLeadingPosition25(-inB5-value)
+p = lead.out-p
+-out-zero = lead.out-zero
+
+shift = 0 - p
+shifted = funShift25(-inB5-value, shift)
+
+hi = shifted[0]
+lo = shifted[1]
+guard = shifted[2]
+
+roundUp = (guard >= 50000)
+carryLo = (lo == 99999) AND roundUp
+carryHi = (hi == 99999) AND (lo == 99999) AND roundUp
+
+-out-hi = hi + carryLo - carryHi × 90000
+-out-lo = (lo + roundUp) % 100000
+
+-out-exp = ((-in-bigExp) + shift + 1 + carryHi) × NOT(-out-zero)
+
+Principle:
+funLeadingPosition25 finds the first significant digit and detects zero. funShift25 performs the normalization shift.
+
+Separate AND conditions generate carry from Lo to Hi and overflow of Hi. Overflow adjusts the mantissa and exponent. A zero result masks the exponent through NOT.
+
+
+-------------------------------------- funAddSub --------------------------------------
+
+Purpose:
+Run the shared signed pipeline for addition and subtraction of Numbers.
+
+Inputs:
+-inB4-a
+-inB4-b
+-in-sub
+
+Outputs:
+-outB4-result
+-out-error
+
+Timing:
+44 logical ticks.
+
+Algorithm:
+b = -inB4-b
+b[3] = XOR((-inB4-b)[3], -in-sub)
+
+order = funMagnitudeOrder(-inB4-a, b)
+big = order.outB4-big
+small = order.outB4-small
+
+BigExp = big[2]
+BigNeg = big[3]
+SmallExp = small[2]
+SmallNeg = small[3]
+
+bigB5 = [big[0], big[1], 0, 0, 0]
+smallB5 = [small[0], small[1], 0, 0, 0]
+
+expDiff = BigExp - SmallExp
+
+bigShift = 1
+smallShift = expDiff + 1
+
+shiftedBig = funShift25(bigB5, bigShift).outB5-result
+shiftedSmall = funShift25(smallB5, smallShift).outB5-result
+
+sum = funWideAdd25(shiftedBig, shiftedSmall).outB5-result
+diff = funWideSub25(shiftedBig, shiftedSmall).outB5-result
+
+sameSign = (BigNeg == SmallNeg)
+differentSign = NOT(sameSign)
+
+busGate(sum, sameSign).out → selectedB5
+busGate(diff, differentSign).out → selectedB5
+
+norm = funNormalizeAddSub25(selectedB5, BigExp)
+
+-outB4-result[0] = norm.out-hi
+-outB4-result[1] = norm.out-lo
+-outB4-result[2] = norm.out-exp
+-outB4-result[3] = BigNeg AND NOT(norm.out-zero)
+
+-out-error =
+    ((norm.out-exp) < -999999) OR
+    ((norm.out-exp) > 999999)
+
+Principle:
+For subtraction, only the second operand's Neg is inverted. funMagnitudeOrder orders operands by magnitude, ignoring signs.
+Hi and Lo of both operands are placed in B5 with three zero chunks. Two independent funShift25 calls align the values according to the exponent difference.
+funWideAdd25 and funWideSub25 operate in parallel. The BigNeg == SmallNeg comparison, through pass and NOT, controls two BusGates: equal signs select the sum, different signs select the difference.
+funNormalizeAddSub25 normalizes the selected B5 relative to BigExp. The sign is taken from BigNeg and cleared for a zero result. An exponent outside the allowed range produces an error.
+
+
+====================================== MULTIPLICATION ======================================
+
+-------------------------------------- funMul --------------------------------------
+
+Purpose:
+Multiply two Numbers using exact chunk products and normalization.
+
+Inputs:
+-inB4-a
+-inB4-b
+
+Outputs:
+-outB4-result
+-out-error
+
+Timing:
+28 logical ticks.
+
+Algorithm:
+product = funMulCore(
+    (-inB4-a)[0], (-inB4-a)[1],
+    (-inB4-b)[0], (-inB4-b)[1]
+)
+normalized = funMulNormalize10(product.p3, product.p2, product.p1)
+
+notZero = AND((-inB4-a)[0], (-inB4-b)[0])
+exp = (-inB4-a)[2] + (-inB4-b)[2] + normalized.expAdd
+neg = (-inB4-a)[3] XOR (-inB4-b)[3]
+
+-outB4-result[0] = normalized.hi
+-outB4-result[1] = normalized.lo
+-outB4-result[2] = exp × notZero
+-outB4-result[3] = neg AND notZero
+
+-out-error = notZero AND ((exp < -999999) OR (exp > 999999))
+
+Principle:
+In the circuit, the zero condition is obtained by AND of the high chunks of normalized A and B. This signal masks Exp and Neg, while Hi/Lo come from the normalizer. No additional OR checks of Lo are needed.
+
+
+-------------------------------------- funMul5x5 --------------------------------------
+
+Purpose:
+Multiply two five-digit chunks exactly without native 10-digit multiplication.
+
+Inputs:
+-in-x
+-in-y
+
+Outputs:
+-out-hi
+-out-lo
+
+Timing:
+10 logical ticks.
+
+Algorithm:
+xH = floor((-in-x)/1000)
+xL = (-in-x)%1000
+yH = floor((-in-y)/1000)
+yL = (-in-y)%1000
+
+highPart = (xH × yH) × 10
+cross = xH × yL + xL × yH
+lowPart = xL × yL
+
+crossHi = floor(cross / 100)
+crossLo = cross % 100
+lowSum = crossLo × 1000 + lowPart
+
+-out-lo = lowSum % 100000
+-out-hi = highPart + crossHi + floor(lowSum / 100000)
+
+Principle:
+In the circuit, two parts of the cross product are first separated using /100 and %100. This prevents a large sum from losing digits before being split into Hi/Lo.
+
+
+-------------------------------------- funMulCore --------------------------------------
+
+Purpose:
+Multiply two 10-digit Hi|Lo mantissas and return a 20-digit product in four base-100000 chunks.
+
+Inputs:
+-in-ahi
+-in-alo
+-in-bhi
+-in-blo
+
+Outputs:
+-out-p3
+-out-p2
+-out-p1
+-out-p0
+
+Timing:
+17 logical ticks.
+
+Algorithm:
+HH = funMul5x5(-in-ahi, -in-bhi)
+HL = funMul5x5(-in-ahi, -in-blo)
+LH = funMul5x5(-in-alo, -in-bhi)
+LL = funMul5x5(-in-alo, -in-blo)
+
+-out-p0 = LL.lo
+
+t1 = LL.hi + HL.lo + LH.lo
+-out-p1 = t1 % 100000
+c1 = floor(t1 / 100000)
+
+t2 = HL.hi + LH.hi + HH.lo + c1
+-out-p2 = t2 % 100000
+c2 = floor(t2 / 100000)
+
+-out-p3 = HH.hi + c2
+
+Principle:
+The product is assembled as a base-100000 carry chain from four exact funMul5x5 products.
+
+
+-------------------------------------- funMulNormalize10 --------------------------------------
+
+Purpose:
+Convert a 19- or 20-digit product p3|p2|p1|p0 into a normalized 10-digit mantissa with half-up rounding.
+
+Inputs:
+-in-p3
+-in-p2
+-in-p1
+
+Outputs:
+-out-hi
+-out-lo
+-out-expAdd
+
+Timing:
+7 logical ticks.
+
+Algorithm:
+is20 = (-in-p3) >= 10000
+
+hi20 = (-in-p3)
+lo20 = (-in-p2)
+round20 = (-in-p1) >= 50000
+
+lo20r = lo20 + round20
+carry20 = floor(lo20r / 100000)
+hi20r = hi20 + carry20
+lo20f = lo20r % 100000
+
+hi19 = (-in-p3) × 10 + floor((-in-p2) / 10000)
+lo19 = ((-in-p2) % 10000) × 10 + floor((-in-p1) / 10000)
+guard19 = floor((-in-p1) / 1000) % 10
+round19 = guard19 >= 5
+
+lo19r = lo19 + round19
+carry19 = floor(lo19r / 100000)
+hi19r = hi19 + carry19
+lo19f = lo19r % 100000
+roundCarry19 = hi19r >= 100000
+
+hi19f = 10000 × roundCarry19 + hi19r × (1 - roundCarry19)
+lo19f2 = lo19f × (1 - roundCarry19)
+
+-out-hi = hi20r × is20 + hi19f × (1 - is20)
+-out-lo = lo20f × is20 + lo19f2 × (1 - is20)
+-out-expAdd = is20 + roundCarry19 × (1 - is20)
+
+Principle:
+A 20-digit product requires +1 to Exp; a 19-digit product does not, except when rounding itself creates a new leading digit.
+
+
+====================================== DIVISION ======================================
+
+-------------------------------------- funDiv --------------------------------------
+
+Purpose:
+Divide two Numbers using divisor initialization, six two-digit steps, and final rounding.
+
+Inputs:
+-inB4-a
+-inB4-b
+
+Outputs:
+-outB4-result
+-out-error
+
+Timing:
+176 logical ticks.
+
+Algorithm:
+init = funDivInit(
+    (-inB4-a)[0], (-inB4-a)[1], (-inB4-a)[2], (-inB4-a)[3],
+    (-inB4-b)[0], (-inB4-b)[1], (-inB4-b)[2], (-inB4-b)[3]
+)
+
+pairs = funDivCore(init.x2, init.x1, init.x0, init.dhi, init.dlo)
+result = funPairsToMantissa(pairs.q0,pairs.q1,pairs.q2,pairs.q3,pairs.q4,pairs.q5)
+
+notZero = NOT(init.aZero)
+exp = init.exp
+neg = init.neg
+
+-outB4-result[0] = result.hi
+-outB4-result[1] = result.lo
+-outB4-result[2] = exp × notZero
+-outB4-result[3] = neg
+
+rangeError = (exp > 999999) OR (exp < -999999)
+-out-error = init.error OR (notZero AND rangeError)
+
+Principle:
+DivCore divides by the safe dHi/dLo prepared by DivInit. Exp does not add expAdd from PairsToMantissa: the ready-made value from Init is used. For a zero numerator, the mask is implemented with physical NOT(aZero).
+
+
+-------------------------------------- funDivInit --------------------------------------
+
+Purpose:
+Prepare initial X, a safe divisor D, Exp, Neg, and zero/error flags.
+
+Inputs:
+-in-ahi
+-in-alo
+-in-aexp
+-in-aneg
+-in-bhi
+-in-blo
+-in-bexp
+-in-bneg
+
+Outputs:
+-out-x2
+-out-x1
+-out-x0
+-out-dhi
+-out-dlo
+-out-exp
+-out-neg
+-out-aZero
+-out-error
+
+Timing:
+11 logical ticks.
+
+Algorithm:
+-out-aZero = NOR(-in-ahi, -in-alo)
+bZero = NOR(-in-bhi, -in-blo)
+-out-error = bZero
+
+-out-dhi = (-in-bhi) + 10000 × bZero
+-out-dlo = (-in-blo)
+
+less = ((-in-ahi) < (-in-bhi)) OR
+       (((-in-ahi) == (-in-bhi)) AND ((-in-alo) < (-in-blo)))
+
+scale = 10 + 90 × less
+t0 = (-in-alo) × scale
+-out-x0 = t0 % 100000
+carry = floor(t0/100000)
+t1 = (-in-ahi) × scale + carry
+-out-x1 = t1 % 100000
+-out-x2 = floor(t1/100000)
+
+-out-exp = (-in-aexp) - (-in-bexp) - less
+-out-neg = ((-in-aneg) XOR (-in-bneg)) AND NOT(-out-aZero)
+
+Principle:
+A zero divisor raises Error, but for the computational pipeline dHi is forced to 10000 to avoid division by 0 inside QHat. The real Divide receives the divisor only from the dHi/dLo outputs.
+
+
+-------------------------------------- funDivQHat --------------------------------------
+
+Purpose:
+Estimate the next quotient pair using the two most significant X chunks and the divisor's high chunk.
+
+Inputs:
+-in-x2
+-in-x1
+-in-dhi
+
+Outputs:
+-out-qHat
+
+Timing:
+4 logical ticks.
+
+Algorithm:
+top = (-in-x2) × 100000 + (-in-x1)
+-out-qHat = floor(top / (-in-dhi))
+
+Principle:
+There is no clamp in the circuit: the computation is multiplication by 100000, addition, division, and floor. In a valid DivPairStep, the qHat estimate lies in 0...100; a value of 100 may be corrected to 99. Nonzero dHi is guaranteed by funDivInit.
+
+
+-------------------------------------- funDivMulD --------------------------------------
+
+Purpose:
+Multiply the 10-digit divisor D by qHat in 0...100 and return a three-chunk base-100000 product.
+
+Inputs:
+-in-qHat
+-in-dhi
+-in-dlo
+
+Outputs:
+-out-p2
+-out-p1
+-out-p0
+
+Timing:
+6 logical ticks.
+
+Algorithm:
+t0 = (-in-dlo) × (-in-qHat)
+-out-p0 = t0 % 100000
+carry = floor(t0 / 100000)
+
+t1 = (-in-dhi) × (-in-qHat) + carry
+-out-p1 = t1 % 100000
+-out-p2 = floor(t1 / 100000)
+
+Principle:
+Within a valid DivPairStep, qHat lies in 0...100. Maximum intermediate values: t0=9999900, carry=99, t1=9999999. These remain within the safe native-precision range.
+
+
+-------------------------------------- funDivCorrectR --------------------------------------
+
+Purpose:
+Subtract qHat×D from X; if the result is negative, decrease qHat by 1 and add D back to the remainder once.
+
+Inputs:
+-in-x2
+-in-x1
+-in-x0
+-in-p2
+-in-p1
+-in-p0
+-in-qHat
+-in-dhi
+-in-dlo
+
+Outputs:
+-out-q
+-out-rhi
+-out-rlo
+-out-correct
+
+Timing:
+11 logical ticks.
+
+Algorithm:
+B = 100000
+
+d0 = (-in-x0) - (-in-p0)
+b0 = d0 < 0
+r0 = d0 + b0 × B
+
+d1 = (-in-x1) - (-in-p1) - b0
+b1 = d1 < 0
+r1 = d1 + b1 × B
+
+d2 = (-in-x2) - (-in-p2) - b1
+-out-correct = d2 < 0
+
+t0 = r0 + (-in-dlo) × (-out-correct)
+-out-rlo = t0 % B
+carry = floor(t0 / B)
+
+t1 = r1 + (-in-dhi) × (-out-correct) + carry
+-out-rhi = t1 % B
+
+-out-q = (-in-qHat) - (-out-correct)
+
+Principle:
+qHat can overestimate by at most one correction step in the accepted pipeline; after correction the remainder again lies in 0<=R<D.
+
+
+-------------------------------------- funDivNextX --------------------------------------
+
+Purpose:
+Multiply the remainder by 100 and convert it into the next three-chunk X.
+
+Inputs:
+-in-rhi
+-in-rlo
+
+Outputs:
+-out-x2
+-out-x1
+-out-x0
+
+Timing:
+6 logical ticks.
+
+Algorithm:
+t0 = (-in-rlo) × 100
+-out-x0 = t0 % 100000
+carry = floor(t0 / 100000)
+
+t1 = (-in-rhi) × 100 + carry
+-out-x1 = t1 % 100000
+-out-x2 = floor(t1 / 100000)
+
+Principle:
+Multiplying the remainder by 100 exposes the next two decimal quotient digits.
+
+
+-------------------------------------- funDivPairStep --------------------------------------
+
+Purpose:
+Execute one two-digit long-division step and produce X for the next step.
+
+Inputs:
+-in-x2
+-in-x1
+-in-x0
+-in-dhi
+-in-dlo
+
+Outputs:
+-out-q
+-out-x2
+-out-x1
+-out-x0
+
+Timing:
+27 logical ticks.
+
+Algorithm:
+qHat = funDivQHat(-in-x2, -in-x1, -in-dhi)
+
+p = funDivMulD(qHat, -in-dhi, -in-dlo)
+
+r = funDivCorrectR(
+    -in-x2,
+    -in-x1,
+    -in-x0,
+    p.p2,
+    p.p1,
+    p.p0,
+    qHat,
+    -in-dhi,
+    -in-dlo
+)
+
+next = funDivNextX(r.rhi, r.rlo)
+
+-out-q = r.q
+-out-x2 = next.x2
+-out-x1 = next.x1
+-out-x0 = next.x0
+
+Principle:
+A PairStep outputs exactly two decimal quotient digits as a number in 0...99 and passes remainder×100 onward.
+
+
+-------------------------------------- funDivCore --------------------------------------
+
+Purpose:
+Execute six PairSteps sequentially to produce 12 decimal quotient digits in six pairs.
+
+Inputs:
+-in-x2
+-in-x1
+-in-x0
+-in-dhi
+-in-dlo
+
+Outputs:
+-out-q0
+-out-q1
+-out-q2
+-out-q3
+-out-q4
+-out-q5
+
+Timing:
+156 logical ticks.
+
+Algorithm:
+s0 = funDivPairStep(-in-x2, -in-x1, -in-x0, -in-dhi, -in-dlo)
+-out-q0 = s0.q
+
+s1 = funDivPairStep(s0.x2, s0.x1, s0.x0, -in-dhi, -in-dlo)
+-out-q1 = s1.q
+
+s2 = funDivPairStep(s1.x2, s1.x1, s1.x0, -in-dhi, -in-dlo)
+-out-q2 = s2.q
+
+s3 = funDivPairStep(s2.x2, s2.x1, s2.x0, -in-dhi, -in-dlo)
+-out-q3 = s3.q
+
+s4 = funDivPairStep(s3.x2, s3.x1, s3.x0, -in-dhi, -in-dlo)
+-out-q4 = s4.q
+
+s5 = funDivPairStep(s4.x2, s4.x1, s4.x0, -in-dhi, -in-dlo)
+-out-q5 = s5.q
+
+Principle:
+The first five pairs contain 10 significant digits; the sixth supplies guard digits for final rounding.
+
+
+-------------------------------------- funPairsToMantissa --------------------------------------
+
+Purpose:
+Assemble the first 10 quotient digits from q0...q4 into Hi|Lo and round them using the first digit of q5.
+
+Inputs:
+-in-q0
+-in-q1
+-in-q2
+-in-q3
+-in-q4
+-in-q5
+
+Outputs:
+-out-hi
+-out-lo
+-out-expAdd
+
+Timing:
+9 logical ticks.
+
+Algorithm:
+rawHi =
+    (-in-q0) × 1000 +
+    (-in-q1) × 10 +
+    floor((-in-q2) / 10)
+
+rawLo =
+    ((-in-q2) % 10) × 10000 +
+    (-in-q3) × 100 +
+    (-in-q4)
+
+guard = floor((-in-q5) / 10)
+roundUp = guard >= 5
+
+lo1 = rawLo + roundUp
+carry = floor(lo1 / 100000)
+lo2 = lo1 % 100000
+
+hi1 = rawHi + carry
+-out-expAdd = hi1 >= 100000
+
+-out-hi = hi1 - 90000 × (-out-expAdd)
+-out-lo = lo1 % 100000
+
+Principle:
+q0...q4 provide exactly 10 significant digits; the first digit of q5 is the guard digit for half-up, and rounding overflow adds 1 to Exp.
