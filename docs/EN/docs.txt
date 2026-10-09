@@ -1,0 +1,500 @@
+====================================== GEAREO CALCULATOR DOCUMENTATION ======================================
+
+
+-------------------------------------- 0. DOCUMENTATION SET --------------------------------------
+
+0.1. Purpose
+
+This is the explanatory part of the documentation set for rebuilding the physical 10-digit Geareo calculator: its architecture, subsystem interactions, rationale for nontrivial decisions, execution order, and environment-specific behavior.
+
+The set covers 72 Circuits: 43 functions and 29 modules. Primary definitions are not duplicated:
+- functions_en.txt — individual function implementations, inputs, outputs, timing, and formulas;
+- modules_en.txt — physical Circuits, their ports, internal connections, and algorithms;
+- contracts_en.txt — normative codes, formats, behavior tables, constraints, and protocols;
+- docs_en.txt — underlying principles, the complete system, design rationale, and rebuild procedure.
+
+0.2. Cross-references
+
+D§6.3 refers to a section of this document; C§21 to a contract section; M:SyncBuffer to a module; F:funFlowDecoder to a function. For example: Flow codes — C§7; the complete dispatch matrix — C§21; the decoder — F:funFlowDecoder; the latching node — M:FlowController.
+
+M: and F: references use exact Circuit names, not line numbers. C§ references a numbered section in the final contracts. Nested lists, exact formulas, and wiring belong in their M/F descriptions rather than in docs.
+
+0.3. Terms to know first
+
+Circuit — a physical Geareo circuit; M: — a module circuit, F: — a function. Scalar — one numeric signal. Bus (abbreviated B) — an ordered group of slots: B4 has four, B11 has eleven; B without a number denotes a generic bus whose width is set by the instance. Slots are indexed from 0. Physical port naming — C§1.
+
+Native number — one numeric value in the Geareo engine; chunk — one part of a decimal mantissa. Entry — the user's literal input; Number — a normalized mathematical value. Frame — prepared display values and decimal points for the ten display positions.
+
+Command — a captured button action; Mode — the ENTRY/RESULT/ERROR interface state; Flow — the one-time execution route chosen for a command. Worker — a controller that executes its subset of commands. Candidate — a new state being prepared; Current — the authoritative state available to readers. Valid — permission to trust a packet; Release — acknowledgment that processing has finished. Tick — one unit of simulation logical time.
+
+These concepts are explained below; precise values, structures, and protocols are specified in contracts_en.txt.
+
+
+-------------------------------------- 1. PROJECT PURPOSE --------------------------------------
+
+1.1. What the user gets
+
+An electronic calculator with a 10-position display and 23 buttons: digits 0–9, +, −, ×, ÷, decimal point, sign toggle, backspace, =, C, M+, M−, MR, and MC. It supports chained calculations, repeated Equals, and separate memory M.
+
+In entry mode, the display preserves the literal appearance of the number, including the decimal point and entered trailing zeros. After calculation, it automatically chooses ordinary FIXED or E notation (SCIENTIFIC); there is no user format switch. Both formats are defined in D§13.3.
+
+1.2. Numeric and physical specifications
+
+Internal results have up to 10 significant decimal digits; for a successful arithmetic Number, Exp is −999999…999999. This limits the internal number, not what is guaranteed to fit on ten Digits. Display output may be rounded again without modifying the stored Number; if the value does not fit, ErrOr is displayed. C§8, C§28, C§39–40.
+
+The sign may occupy a separate position. The decimal point is attached to a Digit and takes no separate position. The physical M indicator lights when stored memory is nonzero; there is no separate error LED. Errors are shown as ErrOr on the main display, with ERROR Mode and clearing through C. M:ErrorRenderer, M:Indicator.
+
+1.3. User-facing behavior and limits
+
+Button presses are processed sequentially: the calculator does not queue rapid presses. A very short press may be missed before capture; while a captured command is executing, new short presses are ignored. Simultaneous presses are unsupported. Arithmetic errors, division by zero, or an unrepresentable display result switch the interface to ERROR; C clears calculations and entry but preserves M. MC clears only M. C§21, C§29–30.
+
+1.4. Architectural boundary
+
+No renderer changes mathematical state. No physical button triggers the ALU directly, without transactional control. Every state bank has a single normal writer; the next packet is not executed until the current transaction completes.
+
+
+-------------------------------------- 2. PHYSICAL CALCULATOR --------------------------------------
+
+2.1. Scene and buttons
+
+The scene contains 23 active buttons, 10 identical Digits, and one separate M Indicator. Every Digit takes Value (character code) and Dot (decimal point); positions run from 0 to 9 left to right. Indicator does not occupy a Digit position. Button bus order — C§14.
+
+5×5 button layout:
+
+| MC  | MR  | M+  | M−  |  ÷  |
+|     |  7  |  8  |  9  |  ×  |
+|     |  4  |  5  |  6  |  −  |
+| BSP |  1  |  2  |  3  |  +  |
+|  C  | +/- |  0  |  .  |  =  |
+
+The two empty positions generate no commands.
+
+2.2. What each button group does
+
+0–9 → Digit (301), with Value equal to the pressed digit; +/−/×/÷ → Operation (302), with Value 201/202/203/204. Decimal point → Dot (303), = → Equals (304), C → Clear (305), +/- → ToggleSign (306), BSP → Backspace (307). M+ → 308, M− → 309, MR → 310, MC → 311. No other commands exist. Codes and payload — C§5, C§13; physical inputs — M:MainController.
+
+2.3. MainController
+
+M:MainController is the root Circuit and central scene connection point. It routes button signals into M:InputController, connects control, workers, states, and renderers, and outputs ten value/dot pairs plus the indicator. Command semantics are not calculated in the root routing itself.
+
+2.4. Scene / logic boundary
+
+Button levels and character/point outputs cross the physical boundary. Results of custom arithmetic and potentially negative intermediate signals remain inside the Circuit. See M:MainController for the full fan-out topology.
+
+
+-------------------------------------- 3. CORE DATA REPRESENTATIONS --------------------------------------
+
+3.1. Entry
+
+Literal user input, not yet a Number ready for the ALU. It stores entered digits, their count, sign, and decimal-point position; it can therefore distinguish 0, -0, 0.0, and 0.00. EntryState physically uses B6 and exposes six logical fields. C§10–11.
+
+3.2. Number: why use a custom format?
+
+Physical testing showed that native Geareo numbers reliably retain roughly seven significant decimal digits. A single native value is unsuitable for the full ten-digit mantissa: low-order digits would be lost. Number is therefore a B4 bus [Hi,Lo,Exp,Neg]: two separate five-digit chunks, a decimal exponent, and a sign bit. Exp locates the first significant digit; the decimal point is not stored as a Number field.
+
+Mathematical value = (−1)^Neg × (Hi × 100000 + Lo) × 10^(Exp−9).
+
+Example: 0.0012345 → Hi=12345, Lo=0, Exp=−3, Neg=0. In a nonzero Number, Hi is normalized; zero is always [0,0,0,0], with no negative sign. Hi×100000 in the formula is a mathematical description only: Hi and Lo are never physically joined into one native scalar. C§8.
+
+Because canonical nonzero Numbers always have Hi≥10000, testing Hi==0 is sufficient to detect zero. Arithmetic functions, including funMagnitudeOrder, and the M indicator use this invariant.
+
+3.3. Entry → Number
+
+F:funEntryToNum converts a positional literal Entry into a normalized Number, eliminating the distinction between different literal representations of numeric zero. It is used for arithmetic commands and M+/M− in ENTRY. Entry display does not require this conversion: M:EntryRenderer reads the literal fields.
+
+3.4. Command, Mode, Flow, Frame
+
+Command B2 consists of Code and Value; the button expresses an intent but does not determine how it is executed. Mode is the current interface context: ENTRY (input), RESULT (result), ERROR (error). Flow is the decision based on Command and the previous Mode: PASS, DROP, BEGIN_ENTRY, TO_RESULT, or CLEAR. These are distinct roles, not four kinds of memory. Frame is a pair of B10 buses of characters and decimal points for display. C§6–7, C§12–14, C§21–22.
+
+3.5. Persistent state
+
+State is separated from combinational functions: EntryState; ArithmeticState (Result, Operand, Operation, OpPending, RhsReady); MemoryState M; and semantic Mode. Every state bank exposes Current, not Candidate, on its public outputs. C§15–20.
+
+
+-------------------------------------- 4. SYSTEM ARCHITECTURE --------------------------------------
+
+4.1. Data path
+
+Buttons → CommandEncoder/SyncBuffer → Command B2 → worker → Candidate → Current → ResultNumberSelector/renderers → DisplayController → Digit.
+
+In parallel: EntryCurrent → EntryRenderer and F:funEntryToNum; ArithmeticCurrent → CalculationController/ResultNumberSelector; MCurrent → MemoryController/CalculationController/Indicator.
+
+4.2. Control path
+
+Input.Valid → StateController → FlowController → PreparationController → MainValid → one worker → WorkerRelease → POST → Mode commit → GlobalRelease. Root Valid holds the transaction even after the worker has completed. C§34–36.
+
+4.3. Stateful versus stateless
+
+Stateless (combinational) nodes calculate their outputs from current inputs: F-functions, ArithmeticUnit, CommandEncoder, renderers, selector, and gates. Stateful nodes retain history: Memory/BusMemory, EntryState/CalculatorState, SyncBuffer, SRFlag, synchronizers, and the feedback timer. Therefore a button signal is not the same as a completed command, and a candidate result is not the current state. A stateful node cannot be replaced by a simple formula.
+
+4.4. Main responsibilities
+
+M:InputController — B2 capture. M:StateController — phase order and Mode. M:EntryController — literal commands. M:CalculationController — Operation/Equals/MR. M:MemoryController — M+/M−/MC. M:CalculatorState — stores Mode/Arithmetic/M. M:DisplayController — final Frame selection. Exact wiring — M:MainController; ownership — C§18–19.
+
+
+-------------------------------------- 5. INPUT SYSTEM --------------------------------------
+
+5.1. Encoder
+
+M:CommandEncoder takes four button buses, produces one Command B2 and Capture=OR of all 23 buttons. Each button enables its B2 branch through BusGate; these branches share a physical wire. The Encoder does not decide semantic Mode or guarantee a priority for simultaneous presses. C§5, C§13–14.
+
+5.2. Command mailbox
+
+M:InputController provides raw Command and Capture to M:SyncBuffer. The consumer may read the packet only after Valid=1. Before that, the combinational Command and memory may still be changing; Valid separates the captured packet from current button levels.
+
+5.3. Capture and button limitations
+
+There is a propagation delay between a physical press and Valid: a very short pulse may disappear before capture, so the command is lost. Once captured, B2 is retained until GlobalRelease; short presses entirely within the busy interval are not queued — there is no queue.
+
+A held button must not repeat automatically: Used prevents recapturing until Capture has been released and the system is rearmed. If multiple buttons are active simultaneously, CommandEncoder does not choose one randomly or by priority: merged branches may create a conflicting packet. Normal operation requires pressing one button at a time.
+
+5.4. Separation of responsibilities
+
+Encoder encodes button levels; SyncBuffer guarantees a stable packet; StateController controls execution order; workers interpret the command. Combining these responsibilities would reintroduce repeated execution and unsettled data.
+
+
+-------------------------------------- 6. SYNCHRONIZATION SYSTEM --------------------------------------
+
+6.1. Why protocols are needed
+
+Wires, connections, and ports transmit values instantly, adding no ticks. Computational primitives introduce delays: each serial primitive adds one logical tick.
+
+Because of these delays, different paths through a circuit may update at different times. Data may still be changing when a control signal becomes active. Separate conditions are therefore needed to define when a packet is captured, when its outputs have settled, and when processing is complete.
+
+Two protocols are used:
+- Packet transfer: Ready → Capture → Valid → Release.
+- Phase execution: Valid + Execute → Work → Done → Release.
+
+The first ensures transferred data are stable; the second controls execution timing. Candidate/Current additionally separates calculation of a new state from its commit. C§20, C§31–33.
+
+6.2. SyncBuffer: packet capture and acknowledgment
+
+M:BusMemory retains a packet in a feedback loop, but its new value may continue to propagate through internal BusGates after Write closes. Raising Valid immediately could let the consumer read the previous bus or a transient one. Therefore Accept first sets Lock and closes Write; the NOT(write) → M:Diode → M:Diode path delays the Settled flag. Valid becomes active only when Lock AND Settled, once the output is safe to read.
+
+Lock means "this slot is occupied"; Used means "this Capture activity has already been consumed." Release clears Lock, but Ready does not return until Capture/Release/Settled have fallen and Used is cleared. Thus a single held press does not generate a sequence of commands. SyncBuffer stores one packet, not a FIFO. Formulas — M:SyncBuffer, M:SRFlag.
+
+6.3. FeedbackSynchronizer: why Done is not Release
+
+M:FeedbackSynchronizer starts Work only when RootValid and Execute allow this phase. After Delay, the timer emits Done for one tick — a useful local event for ending Work or sampling an error. But a subsequent stage might check the signal later and miss the pulse. Release is therefore latched as a level until Valid falls. Done means "the event occurred"; Release means "completion remains observable by other nodes."
+
+Each worker starts only on its own command and cannot release another worker's transaction. ComputeSynchronizer starts the commit phase; WorkerRelease is issued only after CommitSynchronizer. GlobalRelease belongs to StateController. C§32–36.
+
+6.4. ExecTimer
+
+M:ExecTimer starts on a rising edge of Start, counts the requested logical ticks, and emits a single Done. Delay must be at least 5. After completion, its feedback counter may alternate between 0↔−1; Done checks for value 5, so this idle cycle cannot retrigger it. The t-based description in the module models the physical loop, not a separate rising-edge Circuit. Holding Start does not restart the timer.
+
+6.5. State updates as a third boundary
+
+During worker Compute, Work opens Candidate while Current remains closed. When Work falls, Candidate freezes and Current opens for commit. A separate CommitSynchronizer waits for propagation before issuing worker Release. Candidate values are not exposed as authoritative state before then. C§20, C§41–43.
+
+6.6. Reuse beyond the calculator
+
+SyncBuffer handles a generic bus without knowing its slot meanings; FeedbackSynchronizer does not know which operation the worker performs. Both can therefore be reused in other projects if the producer follows payload/Capture rules and the consumer respects Valid/Release and safe Delays.
+
+
+-------------------------------------- 7. TRANSACTION MODEL --------------------------------------
+
+7.1. One packet, one transaction
+
+Every accepted press produces one frozen Command. Semantic Mode comes from the previous authoritative ModeCurrent. F:funFlowDecoder determines Flow from that Mode and Code; M:FlowController latches this Flow after DecodeDelay. Changing Mode at the end of the transaction cannot trigger decoding of the captured command again. C§21, C§34.
+
+7.2. Phase order
+
+Input Capture → Decode → Frozen Flow → PRE → (Worker Compute → Commit or skip) → POST-check → Mode commit → GlobalRelease.
+
+PRE runs for every Flow, even if there is no reset. MainValid for a normal worker is enabled only after PRE Ready. There is one normal worker per command; DROP and CLEAR have no normal worker. Tables — C§19, C§22, C§35.
+
+7.3. PRE
+
+M:PreparationController performs EntryReset before BEGIN_ENTRY and both EntryReset and ArithmeticReset before CLEAR; otherwise it waits through the same safe interval. Reset completes before any normal worker starts. CLEAR passes through PRE and then POST but does not run EntryController as a separate command.
+
+7.4. Worker, Compute, and Commit
+
+A worker is a dedicated executor for a subset of CommandCodes: it reads Current, calculates Candidate, controls Work, and signals completion. Entry, Calculation, and Memory are the three normal workers. Their ComputeDelays differ; worker Release happens after commit, not at the end of raw computation. Mutually exclusive commands prevent competing normal writes to the same bank.
+
+7.5. POST, Mode, and completion
+
+M:StateController waits for WorkerRelease (or PreReady for DROP/CLEAR), checks the latched error and ResultFits, and determines TargetMode. Errors take precedence over normal transitions. Mode is written through ModeCandidate → ModeCurrent in a separate timing window. Only after that completes does GlobalRelease free the Input/Flow packets and permit another capture.
+
+7.6. Transitions
+
+500 PASS — execute without changing Mode; 501 DROP — do not execute; 502 BEGIN_ENTRY — clear Entry first, execute the command, then enter ENTRY; 503 TO_RESULT — execute and enter RESULT; 504 CLEAR — clear Entry/Arithmetic and enter ENTRY, preserving M. Full Mode/Command matrix — C§21–22.
+
+
+-------------------------------------- 8. STATE MODEL --------------------------------------
+
+8.1. Mode and storage location
+
+Semantic Mode: ENTRY/RESULT/ERROR. A single physical M:CalculatorState holds Mode, ArithmeticState B11, and M B4. EntryState is a separate submodule of M:EntryController. Controllers are not storage for the current arithmetic value. C§15–20.
+
+8.2. Why two memory cells?
+
+Geareo memory consists of Valve/BusGate stages in a closed physical feedback loop, not an instantaneous register. If a new state is written directly into the cell from which the next state is calculated, the cell's unsettled output feeds back into the calculation. In Mode testing this produced transient invalid codes. The first cell, Candidate, accepts next state during Work; the second, Current, remains isolated and supplies the unchanged previous state. At Work↓, Candidate closes and Current receives the prepared result. This breaks the unsafe read-modify-write feedback path.
+
+8.3. Why ticks matter
+
+Memory is not an instantaneous register: Valve/BusGate stages and feedback propagate values over several ticks. Work↓ merely opens copying; it does not prove Current is already correct. Without a separate commit window, the next worker could read a transient state. It is particularly important to preserve the actual Pass/NOT Write-control paths for Mode and M, rather than replacing them with abstract NOT/NOT: path differences are what maintain phase separation. M:CalculatorState.
+
+8.4. Authoritativeness and atomicity
+
+ArithmeticState is written as one B11 packet, not separately as Result/Operand/flags; MemoryState is written as one B4. Public outputs come from Current. ModeCurrent is also used for the next decode. Normal writers: EntryController for Entry; CalculationController for Arithmetic; MemoryController for M; StateController for Mode. C§18–20.
+
+8.5. Reset override
+
+Reset does not become a second normal worker. PreparationController independently controls reset passes for the required bank. On Reset, EntryState forces an explicit zero B6 and opens both memories even with Work=1; Arithmetic reset supplies complete DefaultArithmetic and Candidate write permission without prematurely opening Current during active arithmetic Work. C§11, C§17, C§30.
+
+
+-------------------------------------- 9. ENTRY SYSTEM --------------------------------------
+
+9.1. Literal semantics
+
+Entry preserves the user's literal input: sign, decimal-point position, and number of entered digits. Thus 1, 1.0, and 1.00 have different Entry states even though they represent the same mathematical Number. Extra leading zeros without a decimal point are not accumulated. C§10.
+
+9.2. Why LenRaw=Len−1
+
+The physical B6 must initially contain all zeros, while the default logical Entry contains one digit 0 (Len=1). Therefore LenRaw=Len−1 is stored internally and Len=LenRaw+1 is exposed. This reconciles empty physical memory, Clear, and the first display frame without a dedicated InitBusMemory for EntryState. M:EntryState, C§11.
+
+9.3. Literal input commands
+
+Digit appends a digit while a position remains available; Dot places the decimal point after the current last digit and a repeated Dot changes nothing; ToggleSign enables the sign only when space permits; Backspace removes a trailing decimal point or digit while preserving at least one 0 and the current sign. Dot is stored separately and does not consume a Digit. Exact conditions — C§10; implementation — M:EntryController.
+
+9.4. Display and conversion to arithmetic
+
+M:EntryRenderer draws Entry directly, without normalization, using F:funEntryCell. When a mathematical value is needed, F:funEntryToNum produces Number B4. A new entry after RESULT first follows Flow 502 and EntryReset: pressing a digit does not simply erase the previous ArithmeticState Result.
+
+
+-------------------------------------- 10. CALCULATION MODEL --------------------------------------
+
+10.1. Why Result and Operand?
+
+Result is the accumulated result/left operand; Operand stores the right-hand number separately. Operation stores the operation code. After Equals, Operand must survive completion of a pending operation to support repeated Equals. It cannot be reliably reconstructed from Result alone. C§15, C§23–24.
+
+10.2. How OpPending differs from RhsReady
+
+OpPending=1 means an operation with Result as the left operand has not been completed. RhsReady=1 means Operand holds a new right-hand argument ready for use but not yet applied. Their roles are independent: a pending operation may exist without a new RHS; an old Operand can remain stored for repetition without counting as a new RHS. Public ResultNumberSelector chooses Result or Operand based on RhsReady, not OpPending. C§15, C§27.
+
+10.3. Operation
+
+In ENTRY without a pending operation, the new Entry becomes Result and Operand and a new Operation is set. In ENTRY with a pending operation, the previous operation is first applied to Entry, then the next Operation is stored: chaining. In RESULT without pending, a new operation starts from Result; with pending but no ready RHS, another operator press may only replace Operation; if an RHS is ready, the previous operation is completed first. C§23.
+
+10.4. Equals
+
+With no pending operation in ENTRY, Equals adopts Entry as Result without arithmetic. If pending exists in ENTRY, Entry serves as RHS. In RESULT, the stored Operand is used, supporting implicit RHS and repeated Equals. After successful computation, OpPending clears, but Operation and Operand may remain for repeated Equals. With Operation=None and no pending operation, Equals is a no-op. C§24.
+
+10.5. MR within an arithmetic chain
+
+CalculationController executes MR because it changes ArithmeticState rather than M. Without pending, M becomes the current Result and Operand. With pending, M is loaded into Operand, sets RhsReady=1, and computation is deferred until the next operation or Equals. C§25.
+
+10.6. Protecting the result
+
+Only branches needing arithmetic set UseALU. An inactive ArithmeticUnit may report an invalid-operation raw error, but this is not an error in the current command. A real raw ALU error substitutes the old Current for the next B11; sticky Error retains the fault for POST. M:CalculationController, C§29, C§40.
+
+
+-------------------------------------- 11. MEMORY M SYSTEM --------------------------------------
+
+11.1. Independent from ArithmeticState
+
+M is a separate canonical Number B4 with its own Candidate/Current. M survives Clear. CalculationController reads M for MR and MemoryController reads M for M+/M−; only MemoryController writes it. The M indicator reads the high chunk of canonical MCurrent: for any normalized nonzero Number, Hi is nonzero. C§16, C§18–19.
+
+11.2. Which number M+/M− uses
+
+In ENTRY, it uses the converted EntryNumber; in RESULT, Result or Operand is selected by RhsReady. Thus memory operates on the mathematically current number, not display text or an arbitrary B11 field. C§26–27.
+
+11.3. M+, M−, MC, MR
+
+M+ adds the current number to M; M− subtracts it; MC writes canonical zero without the ALU. M:MemoryController has its own ArithmeticUnit for M+/M−, separate from CalculationController. MR does not change M and belongs to CalculationController. Clear is not MC. C§25–26, C§30.
+
+11.4. Failure handling
+
+On an active arithmetic error, the memory Candidate is replaced by old MCurrent, and a sticky memory error is sent to POST. MC does not use the ALU and is therefore independent of raw errors from inactive branches. MemoryController Compute=47, Commit=5; CalculationController has a separate commit of 20. C§29, C§43.
+
+
+-------------------------------------- 12. ARITHMETIC MODEL --------------------------------------
+
+12.1. Why custom arithmetic instead of native + / × / ÷
+
+Even with correctly stored Hi and Lo, a native operation on their combined ten-digit mantissa could lose low-order digits again. All four operations therefore use smaller-chunk arithmetic with carries, alignment, and separate normalization. For Add/Sub, adding Hi to Hi and Lo to Lo is not enough: different Exp values must be aligned, with signs, carries, and guard digits accounted for. Hence a B5 working area containing five chunks (25 decimal digits). This is temporary working space, not the stored result format. C§8–9, F:funAddSub.
+
+12.2. Number and normalization
+
+A nonzero mantissa has ten significant digits and its high Hi begins with a nonzero digit. Exp specifies decimal position and Neg the sign. There is only one zero: [0,0,0,0]. Arithmetic results return to canonical Number format; the Exp of a successful operation is limited to ±999999. C§8, C§38, C§40.
+
+12.3. Add/Sub
+
+F:funMagnitudeOrder finds the larger magnitude; F:funShift25 aligns values in B5 with room for carries and rounding; F:funWideAdd25/F:funWideSub25 operate on unsigned chunks. Subtracting smaller from larger maintains A≥B; F:funAddSub determines the sign. F:funNormalizeAddSub25 returns canonical mantissa and Exp. Detailed shifts and guards — C§9, F:funAddSub.
+
+12.4. Mul
+
+F:funMulCore assembles the product from partial 5×5-digit products; F:funMulNormalize10 normalizes the ten-digit result and adjusts Exp. No large native mantissa is used. Arithmetic rounding happens before the Number is stored. F:funMul, F:funMul5x5.
+
+12.5. Div
+
+F:funDivInit prepares the divisor and detects division by zero. F:funDivCore uses six successive two-digit quotient steps; the first five pairs produce 10 digits and the last supplies a rounding guard. Quotient estimation and remainder correction are split among F:funDivQHat, F:funDivMulD, F:funDivCorrectR, and F:funDivPairStep. Preconditions of helper functions — C§38; do not invoke them arbitrarily without respecting those conditions.
+
+12.6. Rounding and errors
+
+Arithmetic rounding determines the stored ten-digit Number; division by zero or Exp outside the allowed range prevents commit of the invalid result. Display rounding is a separate subsequent stage for ten physical positions; it does not change Result, Operand, or M. Half-up uses F:funRound, not native round. C§39–40.
+
+
+-------------------------------------- 13. DISPLAY SYSTEM --------------------------------------
+
+13.1. One common Frame
+
+All renderers produce two B10 buses, Values and Dots. Value is a digit or special character; Dot is a separate bit for that position. M:DisplayController does not calculate digits; it selects a complete Frame. C§3, C§12, C§28.
+
+13.2. Three Frame sources
+
+M:EntryRenderer outputs literal digits according to Len/Neg/DotOn/DotAfter. M:ResultRenderer displays the mathematical Number from ResultNumberSelector. M:ErrorRenderer produces the constant ErrOr message without a separate error indicator. Values and Dots from different renderers are not mixed.
+
+13.3. What FIXED and SCIENTIFIC mean
+
+FIXED is ordinary decimal notation without E, such as 123.45 or 0.0012. SCIENTIFIC is E notation: mantissa × 10 raised to the exponent; for example, 1.2345E6 means 1.2345 × 10^6. E occupies a Digit position, as does a negative exponent sign when needed. These are not two different values, just two ways to display the same Number. The mode is chosen automatically from Exp, sign, and display capacity.
+
+M:ResultRenderer prepares both Frames in parallel; F:funDisplayMode selects the format. In FIXED, F:funPrecision/F:funRoundNumber/F:funTrimZeros limit and trim displayed digits. SCIENTIFIC also needs room for E and exponent digits; F:funScientificRound rechecks capacity after rounding, which can increase Exp. If even SCIENTIFIC cannot fit, Fits=0 and ErrOr is displayed. The stored Number remains unchanged. C§28, C§39; cell formulas — F:funFixedCell, F:funScientificCell.
+
+13.4. Selection and ERROR
+
+ENTRY displays Entry; RESULT shows the Result if Fits=1, Error Frame if Fits=0; ERROR always shows Error Frame. An unknown Mode likewise selects Error Frame. ResultFits also feeds StateController, so POST can write ERROR Mode. C§28–29.
+
+13.5. Public Digits and indicator
+
+M:MainController routes Values[i]/Dots[i] to Digit[i] for i=0..9. Indicator shows whether M is nonzero. It is independent of the renderers and does not consume a Value/Dot slot. M:Digit, M:Indicator.
+
+
+-------------------------------------- 14. TIME MODEL --------------------------------------
+
+14.1. Logical tick
+
+One physical computational primitive (Valve, Pass, NOT, AND, OR, etc.) has a delay of exactly one logical tick. Serial stages add their delays; parallel paths finish at the longest path. Wire, junction, Via, Port, and a custom Circuit's wrapper add no ticks. TPS changes elapsed seconds, not logical order. C§41.
+
+14.2. Five different timing measures
+
+Do not confuse: the delay of one element; a function's critical path; a worker's ComputeDelay; CommitDelay after Work↓; and total button-press-to-transaction-completion time. Total time also includes packet capture, Decode, PRE, POST, Mode commit, and propagation between stages. C§41–43.
+
+14.3. Computation
+
+Confirmed arithmetic critical paths: Add/Sub=44, Mul=28, Div=176 ticks; M:ArithmeticUnit adds 3 ticks for output selection. Corresponding ALU ComputeDelays: 47, 47, 31, 179. EntryController uses a conservative 20; CalculationController without ALU uses 20; MemoryController uses 47 for all commands. Full helper-function timing — C§42.
+
+14.4. Phases and commit
+
+Decode, PRE, POST-check, and ModeCommit have separate 20-tick windows; CalculationController Commit=20; MemoryController Commit=5, the minimum permitted ExecTimer delay. Work↓ is not WorkerRelease. Current becomes safe for the next command only after the commit and global transaction cycle finish. C§35, C§43.
+
+14.5. Interpreting timing claims
+
+Internal primitive ticks are deterministic; do not assign invented latencies to functions without separate measurement. Physical scene/world interactions do not automatically inherit internal single-tick guarantees. Unmeasured combinational paths are covered by accepted working windows or require new measurements.
+
+
+-------------------------------------- 15. STARTUP AND RESET --------------------------------------
+
+15.1. Self-initialization
+
+M:InitMemory and M:InitBusMemory have a one-time physical initialization path. At fresh startup, constant 1 and delayed NOT(1) briefly overlap as ones; AND(1,NOT(1)) produces a short pulse that opens InitGate. This is not a Boolean identity of settled signals but a propagation transient. Afterward normal feedback retains the data, and InitValue/InitBus changes no longer overwrite state.
+
+15.2. What is initialized
+
+ModeCandidate receives 401 through InitMemory; ModeCurrent adopts it while idle. ArithmeticCandidate receives the full B11 DefaultArithmetic through InitBusMemory, including Operation=200; ArithmeticCurrent copies it. EntryState B6 and M B4 start as physical zeros; Entry LenRaw=0 means logical Len=1. C§17, C§37.
+
+15.3. First command
+
+There is no separate InitializationController or InitReady. RootValid comes from InputController; startup data must settle before DecodeDelay=20 completes. Do not turn one-time startup into a runtime reset on every transaction.
+
+15.4. Runtime reset
+
+Flow 502 clears Entry before new input. Flow 504/Clear clears Entry and ArithmeticState and sets Mode ENTRY in POST, while preserving M. MC clears only M. Entry reset explicitly writes a zero B6 rather than "no signal"; Arithmetic reset writes complete DefaultArithmetic with Operation=200. C§30.
+
+
+-------------------------------------- 16. GEAREO-SPECIFIC BEHAVIOR AND PHYSICAL CIRCUITS --------------------------------------
+
+16.1. Native-number precision
+
+Geareo tests showed reliable native precision of roughly 7 significant decimal digits. Therefore the ten-digit Number mantissa is stored as separate Hi/Lo and the 25-digit B5 working area is divided into five chunks. Combining these parts into one native scalar would lose low-order significant digits. D§3.2, D§12.1.
+
+16.2. Native round
+
+Native round was observed to use round-to-even: 1.5→2, 2.5→2. The project requires half-up for nonnegative mantissas, so it uses F:funRound = floor(x+0.5). Arithmetic and display rounding are separate stages. D§12.6.
+
+16.3. Negative values across the scene boundary
+
+In physical tests, negative values across external circuit/scene connections could turn into 0; inside nested logic, they worked. Thus mathematical and potentially negative intermediate signals remain within M:MainController; only nonnegative character codes and Dot signals leave it. This is an observation from earlier tests, not a guarantee for every Geareo connection.
+
+16.4. Startup transient
+
+Constants and inputs do not settle simultaneously at startup. This brief transition is exactly what produces the AND(1,NOT(1)) pulse in M:InitMemory/M:InitBusMemory. Conversely, other comparisons at startup may temporarily emit false events. Do not treat initial transient codes as authoritative state before settling completes. D§15.
+
+16.5. Memory, Pass, and feedback delay
+
+M:Memory uses WriteValve → feedback Valve → output Pass. Pass isolates the closed loop from the external line. M:BusMemory reproduces this chain with per-slot BusGates; Init variants add a one-time initialization path. At Write↓, the feedback loop may still propagate the last data: a separate timing/settling interval is needed before authoritative reading. D§6, D§8.
+
+16.6. Buses: Valve and BusGate
+
+M:BusGate opens an individual Valve for every slot (up to B15). When a two-slot Command B2 was sent through ordinary scalar Valve branches during development, the second slot sometimes became stuck; per-slot BusGate fixed the issue. A separate simple test did not reproduce it, so this is a project observation, not a universally proven engine rule. M:CommandEncoder, M:BusGate.
+
+16.7. Joining physical wires
+
+wire(a,b,...) in M describes a shared physical wire, not OR or arithmetic addition. Gated branches may be joined only when their sources are mutually exclusive. Multiple simultaneously active sources can alternate across ticks or conflict; this was observed on Capture in CommandEncoder. Logical OR requires a real OR element.
+
+16.8. Zero versus inactive input
+
+Functions cannot reliably distinguish physical absence of signal from numeric 0. Writing state therefore requires a separate data bus and Write. Reset supplies explicit zero or DefaultArithmetic; a closed branch alone does not mean writing 0.
+
+16.9. Logical ticks and the scene boundary
+
+Inside Circuits, logical ticks form a stable timing model. One-tick events persist at low FPS and after changing Circuit Speed.
+
+A test of 1000 serial Diodes measured exactly 1000 logical ticks of delay. Internal workers can therefore use fixed Delays calculated from critical paths.
+
+This determinism must not automatically be extrapolated to one-tick interactions with the scene, motors, sensors, or other world-level objects.
+
+16.10. Editor/cache and mandatory recompilation before testing
+
+After editing a nested Circuit, the editor sometimes displayed old results or retained the previous startup-state instance. Before testing changed logic, update/recompile the changed Circuit and all Circuits that depend on it up to the root call; this is a development practice, not part of the arithmetic model. For a clean integrated start, execute project Run → Stop → new Run. Testing a changed InitValue/InitBus may require a new memory instance or a full simulation restart.
+
+Debugging order: (1) verify nested and parent Circuits are up to date; (2) restart the project; (3) repeat the exact test; (4) change logic only if the failure reproduces. Otherwise it is easy to "fix" an already-corrected circuit because of stale cache data.
+
+16.11. Routing, Ports, and the editor
+
+The public pin direction comes from its name, not its physical side. Wire/junction/Via/Port merely route signals; after cleanup, the large M:MainController uses direct trunks and compact internal buses, without unnecessary Ports. Elsewhere, Ports can simplify long connections. Rename (R) was previously used to rename matching Ports in the editor; verify this together with dependent public pins. Normative naming — C§1; actual fan-out — M:MainController. 
+For unexpected integration results, check exact matches between internal Port labels and public pin names as well as the logic. A mismatch between Fits and -out-fits previously caused an incorrect transition to ERROR despite correct arithmetic.
+
+
+-------------------------------------- 17. FULL DATAFLOW AND REBUILD PROCEDURE --------------------------------------
+
+17.1. One command end to end
+
+1) Button → M:CommandEncoder: Command B2 + Capture.
+2) M:InputController.SyncBuffer: one stable B2, RootValid.
+3) M:StateController → M:FlowController: ModeCurrent + Code → delayed Frozen Flow.
+4) M:PreparationController: PRE/reset until PreReady.
+5) MainValid → one of M:EntryController, M:CalculationController, M:MemoryController.
+6) Worker: compute Candidate, finish Compute, Work↓, copy to Current, Commit, WorkerRelease.
+7) M:StateController: POST-check error/Fits, TargetMode, ModeCandidate/Current commit.
+8) GlobalRelease: free Command and Frozen Flow; clear latched release/error before the next transaction.
+
+Rendering runs in parallel: EntryCurrent/ArithmeticCurrent/MCurrent → M:EntryRenderer or M:ResultNumberSelector → M:ResultRenderer; M:ErrorRenderer → M:DisplayController → M:Digit. In ERROR or RESULT without Fits, the prepared Error Frame is displayed. All input/output routing — M:MainController; formal phase sequence — C§35.
+
+17.2. Three scenario checks
+
+- Digit after RESULT: Flow 502; PRE clears Entry, EntryController writes new literal state, POST sets ENTRY. The previous Result is not turned into the new digit.
+- Operation/Equals: Flow 503 in ENTRY; the worker reads EntryNumber and uses OpPending to decide whether to apply the old Operation; Equals completes pending and preserves Operand for repetition. C§23–24.
+- MR with pending: CalculationController writes M to Operand and sets RhsReady=1; ResultNumberSelector displays Operand; M remains unchanged. The next Equals/Operation performs the arithmetic. C§25, C§27.
+
+17.3. How to rebuild the project
+
+Before building nodes, read D§0.3 and C§1: B means Bus, Number B4 is not one native number, and public port names must match exactly. This is a dependency build order, not a history of development:
+1) Build F-functions; M:Digit/Indicator, M:Memory/InitMemory/BusMemory/InitBusMemory, and M:BusGate/Diode according to their exact F/M descriptions.
+2) Build M:SRFlag, M:ExecTimer, M:FeedbackSynchronizer, M:SyncBuffer; test edges/hold behavior, settling, rearming, and Delay≥5.
+3) Build M:EntryState, M:CalculatorState and startup values; test Current's independence from Candidate at Work=1, writing zero, and commit.
+4) Build input/flow/preparation and the worker controllers; verify ownership, Flow, sticky errors, and Compute/Commit timing against C§18–22, C§29–36, C§43.
+5) Build renderers, selector, DisplayController, then M:MainController and the physical scene. Check M:MainController port by port, not by visually guessing wire placement.
+6) After edits, recompile the changed and all dependent Circuits and clear state through Run → Stop → Run (D§16.10). Run integration scenarios: startup, Entry/Backspace/Dot/sign, chaining, implicit/repeated Equals, M+/M−/MR/MC, Clear, overflow/division-by-zero, Fits, rapid/held presses, and unknown Mode. Never mark tests PASS without actually executing them.
+
+17.4. Rules for safe modification
+
+Do not replace Candidate with direct Current feedback; do not start the next command before GlobalRelease; do not shorten Commit to ComputeDone; do not forward raw ALU error instead of sticky error; do not wire active numeric sources together in place of a real OR; do not alter Number rounding for display purposes; do not reintroduce old codes, startup mechanisms, or ports from archived documentation.
+
+Verification order after a change: exact M/F circuit → relevant C§ contract → dependent M:MainController wiring → explanation in these docs. This keeps the set suitable for future reconstruction.
+
+17.5. Index of remaining helper functions
+
+Display: F:funChunkDigits, F:funMantissaDigit, F:funFixedMeta, F:funExponentMeta, F:funExponentDigit, F:funScientificPrecision, F:funScientificTrim, F:funScientificMeta, F:funTrailingZeros5.
+Entry: F:funLeadingZeros5. Add/Sub: F:funAdd, F:funSub, F:funLeadingPosition25. Division: F:funDiv, F:funDivNextX, F:funPairsToMantissa. Exact formulas and calls for all functions are in functions_en.txt.
