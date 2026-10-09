@@ -1,0 +1,1646 @@
+====================================== ДИСПЛЕЙ / СПІЛЬНІ ======================================
+
+-------------------------------------- funChunkDigits --------------------------------------
+
+Призначення:
+Розбити п'ятизначний chunk на п'ять окремих десяткових цифр.
+
+Входи:
+-in-in
+
+Виходи:
+-out-d0
+-out-d1
+-out-d2
+-out-d3
+-out-d4
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+-out-d0 = floor((-in-in) / 10000) % 10
+-out-d1 = floor((-in-in) / 1000) % 10
+-out-d2 = floor((-in-in) / 100) % 10
+-out-d3 = floor((-in-in) / 10) % 10
+-out-d4 = floor(-in-in) % 10
+
+Принцип:
+Завжди повертає п'ять позицій, включно з ведучими нулями.
+
+
+-------------------------------------- funDisplayMode --------------------------------------
+
+Призначення:
+Визначити, чи Number може бути показаний у FIXED, чи потрібен SCIENTIFIC.
+
+Входи:
+-in-exp
+-in-neg
+
+Виходи:
+-out-fixed
+-out-scientific
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+limit = 9 - (-in-neg)
+-out-fixed = ((-in-exp) >= -limit) × ((-in-exp) <= limit)
+-out-scientific = 1 - (-out-fixed)
+
+Принцип:
+Знак числа займає одну з десяти фізичних позицій дисплея.
+
+
+-------------------------------------- funPrecision --------------------------------------
+
+Призначення:
+Визначити максимальну кількість значущих цифр, що поміщається у FIXED.
+
+Входи:
+-in-exp
+-in-neg
+
+Виходи:
+-out-keep
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+base = 10 - (-in-neg)
+isNegativeExp = (-in-exp) < 0
+-out-keep = base + (-in-exp) × isNegativeExp
+
+Принцип:
+При від'ємному Exp ведучі 0.00... займають фізичні позиції та зменшують доступну точність.
+
+
+-------------------------------------- funRound --------------------------------------
+
+Призначення:
+Виконати округлення half-up для невід'ємного значення.
+
+Входи:
+in
+
+Виходи:
+out
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+out = floor(in + 0.5)
+
+Принцип:
+Використовується замість native round, поведінка якого не прийнята як контракт проєкту.
+
+
+-------------------------------------- funRoundNumber --------------------------------------
+
+Призначення:
+Округлити десятизначну мантису Hi|Lo до заданої кількості значущих цифр без складання Hi і Lo в одне native-number.
+
+Входи:
+-in-hi
+-in-lo
+-in-keep
+
+Виходи:
+-out-hi
+-out-lo
+-out-expAdd
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+keepGt5 = (-in-keep) > 5
+keepEq5 = (-in-keep) == 5
+keepLt5 = (-in-keep) < 5
+
+dropLo = 10 - (-in-keep)
+factorLo = 10^dropLo
+roundedLo = funRound((-in-lo) / factorLo) × factorLo
+carryGt5 = floor(roundedLo / 100000)
+hiGt5 = (-in-hi) + carryGt5
+loGt5 = roundedLo % 100000
+
+carryEq5 = (-in-lo) >= 50000
+hiEq5 = (-in-hi) + carryEq5
+loEq5 = 0
+
+factorHi = 10^(5 - (-in-keep))
+hiLt5 = funRound((-in-hi) / factorHi) × factorHi
+loLt5 = 0
+
+hi1 = hiGt5 × keepGt5 + hiEq5 × keepEq5 + hiLt5 × keepLt5
+lo1 = loGt5 × keepGt5 + loEq5 × keepEq5 + loLt5 × keepLt5
+
+overflow = hi1 >= 100000
+-out-hi = 10000 × overflow + hi1 × (1 - overflow)
+-out-lo = lo1 × (1 - overflow)
+-out-expAdd = overflow
+
+Принцип:
+Округлення виконується окремо над Hi/Lo; значення Hi×100000+Lo фізично не створюється.
+
+
+-------------------------------------- funTrailingZeros5 --------------------------------------
+
+Призначення:
+Порахувати безперервні нулі в кінці п'ятизначного chunk.
+
+Входи:
+-in-in
+
+Виходи:
+-out-zeros
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+z1 = ((-in-in) % 10) == 0
+z2 = ((-in-in) % 100) == 0
+z3 = ((-in-in) % 1000) == 0
+z4 = ((-in-in) % 10000) == 0
+z5 = (-in-in) == 0
+-out-zeros = z1 + z2 + z3 + z4 + z5
+
+Принцип:
+Рахує лише trailing zeros, а не всі нулі всередині chunk.
+
+
+-------------------------------------- funTrimZeros --------------------------------------
+
+Призначення:
+Визначити, скільки значущих цифр реально потрібно показувати після округлення FIXED-результату.
+
+Входи:
+-in-hi
+-in-lo
+-in-exp
+
+Виходи:
+-out-keep
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+hiZeros = funTrailingZeros5(-in-hi)
+loZeros = funTrailingZeros5(-in-lo)
+totalZeros = loZeros + hiZeros × ((-in-lo) == 0)
+sigKeep = 10 - totalZeros
+minKeep = max((-in-exp) + 1, 1)
+-out-keep = max(sigKeep, minKeep)
+
+Принцип:
+Прибирає лише непотрібні кінцеві нулі, але зберігає нулі, необхідні для правильного положення десяткової точки.
+
+
+-------------------------------------- funFixedMeta --------------------------------------
+
+Призначення:
+Обчислити координати FIXED-розмітки дисплея.
+
+Входи:
+-in-exp
+-in-neg
+-in-keep
+
+Виходи:
+-out-start
+-out-sigStart
+-out-dotPos
+-out-dotOn
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+small = (-in-exp) < 0
+-out-sigStart = 10 - (-in-keep)
+-out-start = (-out-sigStart) + (-in-exp) × small - (-in-neg)
+-out-dotPos = (-out-sigStart) + (-in-exp)
+-out-dotOn = (-in-keep) > ((-in-exp) + 1)
+
+Принцип:
+Функція не формує символи дисплея; вона лише визначає позиції FIXED-представлення.
+
+
+-------------------------------------- funMantissaDigit --------------------------------------
+
+Призначення:
+Отримати цифру десятирозрядної мантиси Hi|Lo для індексу 0...9.
+
+Входи:
+-in-hi
+-in-lo
+-in-index
+
+Виходи:
+-out-digit
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+hiDigits = funChunkDigits(-in-hi)
+loDigits = funChunkDigits(-in-lo)
+
+Для i = 0...4:
+    valveHi[i] = ((-in-index) == i)
+    valveLo[i] = ((-in-index) == i+5)
+
+-out-digit = OR(
+    valveHi[0..4] пропускають hiDigits[0..4],
+    valveLo[0..4] пропускають loDigits[0..4]
+)
+
+Принцип:
+Десять керованих Valve вибирають потрібну цифру. На допустимому індексі відкритий лише один Valve; поза діапазоном усі закриті, вихід 0.
+
+
+-------------------------------------- funFixedCell --------------------------------------
+
+Призначення:
+Сформувати Value і Dot для однієї фізичної позиції FIXED-дисплея.
+
+Входи:
+-in-hi
+-in-lo
+-in-start
+-in-sigStart
+-in-dotPos
+-in-dotOn
+-in-neg
+-in-pos
+
+Виходи:
+-out-value
+-out-dot
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+blank = (-in-pos) < (-in-start)
+minus = ((-in-pos) == (-in-start)) × (-in-neg)
+mantissa = (-in-pos) >= (-in-sigStart)
+index = (-in-pos) - (-in-sigStart)
+digit = funMantissaDigit(-in-hi, -in-lo, index)
+
+-out-value = blank × 100 + minus × 101 + digit × mantissa
+-out-dot = ((-in-pos) == (-in-dotPos)) × (-in-dotOn)
+
+Принцип:
+Позиція самостійно визначає, чи є вона Blank, Minus, цифрою мантиси або проміжним нулем.
+
+
+-------------------------------------- funExponentMeta --------------------------------------
+
+Призначення:
+Отримати знак, модуль і кількість десяткових цифр exponent.
+
+Входи:
+-in-exp
+
+Виходи:
+-out-absExp
+-out-expNeg
+-out-expDigits
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+-out-absExp = abs(-in-exp)
+-out-expNeg = (-in-exp) < 0
+
+-out-expDigits =
+    1 +
+    ((-out-absExp) >= 10) +
+    ((-out-absExp) >= 100) +
+    ((-out-absExp) >= 1000) +
+    ((-out-absExp) >= 10000) +
+    ((-out-absExp) >= 100000) +
+    ((-out-absExp) >= 1000000) +
+    ((-out-absExp) >= 10000000)
+
+Принцип:
+Метадані exponent використовуються для побудови SCIENTIFIC-рядка справа наліво.
+
+
+-------------------------------------- funScientificPrecision --------------------------------------
+
+Призначення:
+Визначити максимальну точність мантиси, доступну у SCIENTIFIC.
+
+Входи:
+-in-neg
+-in-expNeg
+-in-expDigits
+
+Виходи:
+-out-keep
+-out-fits
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+-out-keep = 9 - (-in-neg) - (-in-expNeg) - (-in-expDigits)
+-out-fits = (-out-keep) >= 1
+
+Принцип:
+Із десяти позицій віднімаються знак числа, E, знак exponent та цифри exponent.
+
+
+-------------------------------------- funScientificRound --------------------------------------
+
+Призначення:
+Округлити Number для SCIENTIFIC з повторною перевіркою місткості після можливої зміни exponent.
+
+Входи:
+-in-hi
+-in-lo
+-in-exp
+-in-neg
+
+Виходи:
+-out-hi
+-out-lo
+-out-exp
+-out-maxKeep
+-out-fits
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+meta1 = funExponentMeta(-in-exp)
+prec1 = funScientificPrecision(-in-neg, meta1.expNeg, meta1.expDigits)
+safeKeep1 = max(prec1.keep, 1)
+
+round1 = funRoundNumber(-in-hi, -in-lo, safeKeep1)
+candidateExp = (-in-exp) + round1.expAdd
+
+meta2 = funExponentMeta(candidateExp)
+prec2 = funScientificPrecision(-in-neg, meta2.expNeg, meta2.expDigits)
+safeKeep2 = max(prec2.keep, 1)
+
+finalKeep = min(safeKeep1, safeKeep2)
+round2 = funRoundNumber(-in-hi, -in-lo, finalKeep)
+
+-out-hi = round2.hi
+-out-lo = round2.lo
+-out-exp = (-in-exp) + round2.expAdd
+-out-maxKeep = finalKeep
+-out-fits = prec2.fits
+
+Принцип:
+Якщо округлення збільшує кількість цифр exponent, доступна точність зменшується; вже відкинута точність назад не повертається.
+
+
+-------------------------------------- funScientificTrim --------------------------------------
+
+Призначення:
+Прибрати зайві trailing zeros із SCIENTIFIC-мантиси, не перевищуючи вже розрахований ліміт точності.
+
+Входи:
+-in-hi
+-in-lo
+-in-maxKeep
+
+Виходи:
+-out-keep
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+hiZeros = funTrailingZeros5(-in-hi)
+loZeros = funTrailingZeros5(-in-lo)
+totalZeros = loZeros + hiZeros × ((-in-lo) == 0)
+naturalKeep = 10 - totalZeros
+-out-keep = max(min(naturalKeep, -in-maxKeep), 1)
+
+Принцип:
+SCIENTIFIC показує не більше maxKeep цифр і не зберігає непотрібні кінцеві нулі.
+
+
+-------------------------------------- funScientificMeta --------------------------------------
+
+Призначення:
+Обчислити координати SCIENTIFIC-розмітки.
+
+Входи:
+-in-sigKeep
+-in-neg
+-in-expNeg
+-in-expDigits
+
+Виходи:
+-out-start
+-out-sigStart
+-out-ePos
+-out-expStart
+-out-dotOn
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+-out-expStart = 10 - (-in-expDigits)
+-out-ePos = (-out-expStart) - 1 - (-in-expNeg)
+-out-sigStart = (-out-ePos) - (-in-sigKeep)
+-out-start = (-out-sigStart) - (-in-neg)
+-out-dotOn = (-in-sigKeep) > 1
+
+Принцип:
+Exponent завжди закінчується у позиції 9; решта SCIENTIFIC-рядка будується справа наліво.
+
+
+-------------------------------------- funExponentDigit --------------------------------------
+
+Призначення:
+Отримати цифру exponent для конкретної фізичної позиції дисплея.
+
+Входи:
+-in-absExp
+-in-expStart
+-in-pos
+
+Виходи:
+-out-digit
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+active = (-in-pos) >= (-in-expStart)
+place = (9 - (-in-pos)) × active
+digitRaw = floor((-in-absExp) / 10^place) % 10
+-out-digit = digitRaw × active
+
+Принцип:
+Exponent вирівняний вправо та завжди закінчується у позиції 9.
+
+
+-------------------------------------- funScientificCell --------------------------------------
+
+Призначення:
+Сформувати Value і Dot для однієї фізичної позиції SCIENTIFIC-дисплея.
+
+Входи:
+-in-hi
+-in-lo
+-in-absExp
+-in-start
+-in-sigStart
+-in-ePos
+-in-expStart
+-in-dotOn
+-in-pos
+
+Виходи:
+-out-value
+-out-dot
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+blank = (-in-pos) < (-in-start)
+numberMinus = ((-in-pos) == (-in-start)) × ((-in-start) < (-in-sigStart))
+mantissa = ((-in-pos) >= (-in-sigStart)) × ((-in-pos) < (-in-ePos))
+mantissaIndex = (-in-pos) - (-in-sigStart)
+mantissaDigit = funMantissaDigit(-in-hi, -in-lo, mantissaIndex)
+e = (-in-pos) == (-in-ePos)
+expMinus = ((-in-pos) > (-in-ePos)) × ((-in-pos) < (-in-expStart))
+exponentDigit = funExponentDigit(-in-absExp, -in-expStart, -in-pos)
+
+-out-value =
+    blank × 100 +
+    numberMinus × 101 +
+    mantissaDigit × mantissa +
+    e × 102 +
+    expMinus × 101 +
+    exponentDigit
+
+-out-dot = ((-in-pos) == (-in-sigStart)) × (-in-dotOn)
+
+Принцип:
+Одна Cell визначає, чи є її позиція Blank, знаком числа, цифрою мантиси, E, знаком exponent або цифрою exponent.
+
+
+====================================== ENTRY / FLOW ======================================
+
+-------------------------------------- funEntryCell --------------------------------------
+
+Призначення:
+Сформувати Value і Dot для однієї фізичної позиції буквального Entry.
+
+Входи:
+-inB5-hiDigits
+-inB5-loDigits
+-in-len
+-in-neg
+-in-dotOn
+-in-dotAfter
+-in-pos
+
+Виходи:
+-out-value
+-out-dot
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+digitStart = 10 - (-in-len)
+entryIndex = (-in-pos) - digitStart
+
+isDigit = (-in-pos) >= digitStart
+minus = (-in-neg) × ((-in-pos) == digitStart - 1)
+blank = ((-in-pos) < digitStart) × (1 - minus)
+
+hiShift = max(5 - (-in-len), 0)
+hiIndex = entryIndex + hiShift
+loIndex = entryIndex + 5 - (-in-len)
+
+hiDigit =
+    (-inB5-hiDigits)[0] × (hiIndex == 0) +
+    (-inB5-hiDigits)[1] × (hiIndex == 1) +
+    (-inB5-hiDigits)[2] × (hiIndex == 2) +
+    (-inB5-hiDigits)[3] × (hiIndex == 3) +
+    (-inB5-hiDigits)[4] × (hiIndex == 4)
+
+loDigit =
+    (-inB5-loDigits)[0] × (loIndex == 0) +
+    (-inB5-loDigits)[1] × (loIndex == 1) +
+    (-inB5-loDigits)[2] × (loIndex == 2) +
+    (-inB5-loDigits)[3] × (loIndex == 3) +
+    (-inB5-loDigits)[4] × (loIndex == 4)
+
+digit = hiDigit × (entryIndex < 5) + loDigit × (entryIndex >= 5)
+
+-out-value = blank × 100 + minus × 101 + digit × isDigit
+
+dotPos = digitStart + (-in-dotAfter) - 1
+-out-dot = (-in-dotOn) × ((-in-pos) == dotPos)
+
+Принцип:
+Entry вирівнюється вправо; Len визначає реальні введені цифри, знак стоїть безпосередньо ліворуч від першої цифри, а точка не займає окремої позиції.
+
+
+-------------------------------------- funLeadingZeros5 --------------------------------------
+
+Призначення:
+Порахувати безперервні ведучі нулі в п'ятизначному chunk.
+
+Входи:
+-in-in
+
+Виходи:
+-out-zeros
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+-out-zeros =
+    ((-in-in) < 10000) +
+    ((-in-in) < 1000) +
+    ((-in-in) < 100) +
+    ((-in-in) < 10) +
+    ((-in-in) < 1)
+
+Принцип:
+Для значення 0 повертає 5; для ненульового значення повертає позицію першої значущої цифри всередині п'ятизначного chunk.
+
+
+-------------------------------------- funEntryToNum --------------------------------------
+
+Призначення:
+Перетворити буквальний Entry у канонічний Number.
+
+Входи:
+-in-hi
+-in-lo
+-in-len
+-in-neg
+-in-dotOn
+-in-dotAfter
+
+Виходи:
+-out-hi
+-out-lo
+-out-exp
+-out-neg
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+hiShift = max(5 - (-in-len), 0)
+packedHi = (-in-hi) × 10^hiShift
+
+long = (-in-len) > 5
+loShift = max(10 - (-in-len), 0)
+packedLo = (-in-lo) × 10^loShift × long
+
+lzHi = funLeadingZeros5(packedHi)
+lzLo = funLeadingZeros5(packedLo)
+hiZero = packedHi == 0
+
+firstSig = lzHi + hiZero × lzLo
+
+decimalAfter = (-in-len) - (-in-dotOn) × ((-in-len) - (-in-dotAfter))
+rawExp = decimalAfter - firstSig - 1
+
+zero = (packedHi == 0) × (packedLo == 0)
+notZero = 1 - zero
+
+caseA = firstSig < 5
+sA = firstSig
+factorA = 10^(5 - sA)
+hiA = packedHi × 10^sA + floor(packedLo / factorA)
+loA = (packedLo % factorA) × 10^sA
+
+sB = firstSig - 5
+hiB = packedLo × 10^sB
+loB = 0
+
+-out-hi = (hiA × caseA + hiB × (1 - caseA)) × notZero
+-out-lo = (loA × caseA + loB × (1 - caseA)) × notZero
+-out-exp = rawExp × notZero
+-out-neg = (-in-neg) × notZero
+
+Принцип:
+Entry спочатку пакується вліво, потім нормалізується за першою значущою цифрою; будь-який числовий нуль перетворюється на канонічний 0|0|0|0.
+
+
+-------------------------------------- funFlowDecoder --------------------------------------
+
+Призначення:
+Комбінаторно визначити FlowCode за поточним Mode і Code.
+
+Входи:
+-in-code
+-in-mode
+
+Виходи:
+-out-flow
+
+Таймінг:
+Не зафіксовано окремо.
+
+Алгоритм:
+entry = (-in-mode) == 401
+result = (-in-mode) == 402
+error = (-in-mode) == 403
+
+validCode = ((-in-code) >= 301) × ((-in-code) <= 311)
+clear = (-in-code) == 305
+entryCommands = ((-in-code)==301) OR ((-in-code)==303) OR
+                ((-in-code)==306) OR ((-in-code)==307)
+resultCommands = ((-in-code)==302) OR ((-in-code)==304) OR
+                 ((-in-code)==310)
+
+beginEntry = result × entryCommands
+toResult = entry × resultCommands
+execute = validCode × (entry OR result) × (1-clear)
+pass = execute × (1-beginEntry) × (1-toResult)
+drop = 1 - clear - beginEntry - toResult - pass
+
+-out-flow = 504×clear + 502×beginEntry + 503×toResult +
+            500×pass + 501×drop
+
+Принцип:
+Перевірки на 308 і 309 окремо немає: вони потрапляють у загальний допустимий діапазон 301...311. У ERROR усі команди, крім 305, відкидаються; поза діапазоном — DROP.
+
+
+====================================== ДОДАВАННЯ / ВІДНІМАННЯ ======================================
+
+-------------------------------------- funAdd --------------------------------------
+
+Призначення:
+Виконати додавання двох Number.
+
+Входи:
+-inB4-a
+-inB4-b
+
+Виходи:
+-outB4-result
+-out-error
+
+Таймінг:
+44 логічні тіки.
+
+Алгоритм:
+-outB4-result = funAddSub(-inB4-a, -inB4-b, 0).result
+-out-error = funAddSub(-inB4-a, -inB4-b, 0).error
+
+Принцип:
+Тонка оболонка над funAddSub з -in-sub=0.
+
+
+-------------------------------------- funSub --------------------------------------
+
+Призначення:
+Виконати віднімання двох Number.
+
+Входи:
+-inB4-a
+-inB4-b
+
+Виходи:
+-outB4-result
+-out-error
+
+Таймінг:
+44 логічні тіки.
+
+Алгоритм:
+-outB4-result = funAddSub(-inB4-a, -inB4-b, 1).result
+-out-error = funAddSub(-inB4-a, -inB4-b, 1).error
+
+Принцип:
+Тонка оболонка над funAddSub з -in-sub=1.
+
+
+-------------------------------------- funMagnitudeOrder --------------------------------------
+
+Призначення:
+Впорядкувати два Number за абсолютною величиною.
+
+Входи:
+-inB4-a
+-inB4-b
+
+Виходи:
+-outB4-big
+-outB4-small
+
+Таймінг:
+7 логічних тіків.
+
+Алгоритм:
+aHi = (-inB4-a)[0]
+aLo = (-inB4-a)[1]
+aExp = (-inB4-a)[2]
+
+bHi = (-inB4-b)[0]
+bLo = (-inB4-b)[1]
+bExp = (-inB4-b)[2]
+
+baseIsBig =
+    (aExp > bExp) +
+    (aExp == bExp) × (aHi > bHi) +
+    (aExp == bExp) × (aHi == bHi) × (aLo >= bLo)
+
+aNonZero = (aHi != 0)
+bZero = (bHi == 0)
+
+aIsBig = (baseIsBig AND aNonZero) OR bZero
+bIsBig = NOT(aIsBig)
+
+busGate(-inB4-a, aIsBig).out → -outB4-big
+busGate(-inB4-b, bIsBig).out → -outB4-big
+
+busGate(-inB4-b, aIsBig).out → -outB4-small
+busGate(-inB4-a, bIsBig).out → -outB4-small
+
+Принцип:
+Ненульові Number порівнюються за Exp, потім Hi та Lo. Neg не впливає на порядок модулів, але проходить у вибраних B4 без змін.
+Канонічний нуль визначається за Hi=0. Результат звичайного порівняння пропускається через AND з aHi!=0, після чого OR з bHi==0 забезпечує правильний вибір Big при нульових операндах. При рівності обирається A.
+
+
+-------------------------------------- funShift25 --------------------------------------
+
+Призначення:
+Зсунути 25-значне десяткове значення B5 на довільну кількість десяткових позицій у межах робочого поля.
+
+Входи:
+-inB5-value
+-in-shift
+
+Виходи:
+-outB5-result
+
+Таймінг:
+8 логічних тіків.
+
+Алгоритм:
+B = 100000
+c0 = (-inB5-value)[0]
+c1 = (-inB5-value)[1]
+c2 = (-inB5-value)[2]
+c3 = (-inB5-value)[3]
+c4 = (-inB5-value)[4]
+
+s = abs(-in-shift)
+far = s >= 25
+k = floor(s / 5)
+r = s % 5
+p = 10^r
+q = 10^(5 - r)
+
+Для (-in-shift) >= 0 (зсув вправо):
+right[i] = floor(c[i-k] / p) + (c[i-k-1] % p) × q
+
+Для (-in-shift) < 0 (зсув вліво):
+left[i] = ((c[i+k] × p) % B) + floor(c[i+k+1] / q)
+
+c[j] = 0 для j поза 0...4
+
+-outB5-result[i] =
+    (right[i] × ((-in-shift) >= 0) +
+     left[i] × ((-in-shift) < 0)) × (1 - far)
+
+Принцип:
+Додатний shift зміщує десятковий рядок вправо, від'ємний — вліво; цифри, що виходять за 25-значне поле, відкидаються.
+
+
+-------------------------------------- funWideAdd25 --------------------------------------
+
+Призначення:
+Додати два беззнакові 25-значні B5 через паралельно обчислені carry-умови.
+
+Входи:
+-inB5-a
+-inB5-b
+
+Виходи:
+-outB5-result
+
+Таймінг:
+6 логічних тіків.
+
+Алгоритм:
+B = 100000
+
+Для i=0..4:
+    s[i] = (-inB5-a)[i] + (-inB5-b)[i]
+    g[i] = (s[i] >= B)
+    p[i] = (s[i] >= B-1)
+
+Тут i=4 — наймолодший chunk. Carry look-ahead:
+c[4] = 0
+c[3] = g[4]
+c[2] = g[3] OR (p[3] AND g[4])
+c[1] = g[2] OR (p[2] AND g[3]) OR (p[2] AND p[3] AND g[4])
+c[0] = g[1] OR (p[1] AND g[2]) OR
+       (p[1] AND p[2] AND g[3]) OR
+       (p[1] AND p[2] AND p[3] AND g[4])
+
+Для i=0..4:
+    -outB5-result[i] = (s[i] + c[i]) % B
+
+Принцип:
+Carry визначаються через generate/propagate і комбінації OR/AND без послідовної залежності кожного результатного chunk від попереднього. Carry за межі 25 цифр відкидається.
+
+
+-------------------------------------- funWideSub25 --------------------------------------
+
+Призначення:
+Відняти B від A у 25-значному B5 через паралельно обчислені borrow-умови.
+
+Входи:
+-inB5-a
+-inB5-b
+
+Виходи:
+-outB5-result
+
+Таймінг:
+5 логічних тіків.
+
+Алгоритм:
+B = 100000
+
+Для i=1..4:
+    g[i] = ((-inB5-a)[i] < (-inB5-b)[i])
+Для i=1..3:
+    p[i] = ((-inB5-a)[i] == (-inB5-b)[i])
+
+Тут i=4 — наймолодший chunk. Borrow look-ahead:
+b[4] = 0
+b[3] = g[4]
+b[2] = g[3] OR (p[3] AND g[4])
+b[1] = g[2] OR (p[2] AND g[3]) OR (p[2] AND p[3] AND g[4])
+b[0] = g[1] OR (p[1] AND g[2]) OR
+       (p[1] AND p[2] AND g[3]) OR
+       (p[1] AND p[2] AND p[3] AND g[4])
+
+Для i=0..4:
+    -outB5-result[i] = ((-inB5-a)[i] - (-inB5-b)[i] - b[i] + B) % B
+
+Принцип:
+Позиції A і B спочатку порівнюються паралельно; далі borrow-и збираються з g/p умов. Функція використовується для A>=B; при A<B знак результату тут не обчислюється.
+
+
+-------------------------------------- funLeadingPosition25 --------------------------------------
+
+Призначення:
+Знайти позицію першої ненульової цифри у п'яти base-100000 chunks і визначити zero.
+
+Входи:
+-inB5-value
+
+Виходи:
+-out-p
+-out-zero
+
+Таймінг:
+5 логічних тіків.
+
+Алгоритм:
+Для i=0..4:
+    chunk[i] = (-inB5-value)[i]
+    z[i] = NOT(chunk[i])          // chunk дорівнює 0
+    n[i] = OR(chunk[i])           // chunk не дорівнює 0
+    lz[i] = funLeadingZeros5(chunk[i])
+
+g0 = n[0]
+g1 = z[0] AND n[1]
+g2 = z[0] AND z[1] AND n[2]
+g3 = z[0] AND z[1] AND z[2] AND n[3]
+g4 = z[0] AND z[1] AND z[2] AND z[3] AND n[4]
+
+-out-zero = z[0] AND z[1] AND z[2] AND z[3] AND z[4]
+-out-p = g0×lz[0] + g1×(5+lz[1]) + g2×(10+lz[2]) +
+         g3×(15+lz[3]) + g4×(20+lz[4]) + 25×(-out-zero)
+
+Принцип:
+На схемі реальний вихід називається p, а не n. Маски з AND/NOT/OR вибирають лише перший ненульовий chunk; для повного нуля p=25 і zero=1.
+
+
+-------------------------------------- funNormalizeAddSub25 --------------------------------------
+
+Призначення:
+Перетворити 25-значний B5 результат на нормалізовані Hi/Lo, Exp і Zero.
+
+Входи:
+-inB5-value
+-in-bigExp
+
+Виходи:
+-out-hi
+-out-lo
+-out-exp
+-out-zero
+
+Таймінг:
+18 логічних тіків.
+
+Алгоритм:
+lead = funLeadingPosition25(-inB5-value)
+p = lead.out-p
+-out-zero = lead.out-zero
+
+shift = 0 - p
+shifted = funShift25(-inB5-value, shift)
+
+hi = shifted[0]
+lo = shifted[1]
+guard = shifted[2]
+
+roundUp = (guard >= 50000)
+carryLo = (lo == 99999) AND roundUp
+carryHi = (hi == 99999) AND (lo == 99999) AND roundUp
+
+-out-hi = hi + carryLo - carryHi × 90000
+-out-lo = (lo + roundUp) % 100000
+
+-out-exp = ((-in-bigExp) + shift + 1 + carryHi) × NOT(-out-zero)
+
+Принцип:
+funLeadingPosition25 визначає позицію першої значущої цифри та нульове значення. funShift25 виконує нормалізаційний зсув.
+
+Окремі AND-умови формують перенос із Lo у Hi та переповнення Hi. Переповнення Hi коригує мантису й експоненту. Нульовий результат маскує експоненту через NOT.
+
+
+-------------------------------------- funAddSub --------------------------------------
+
+Призначення:
+Виконати спільний signed pipeline для додавання та віднімання Number.
+
+Входи:
+-inB4-a
+-inB4-b
+-in-sub
+
+Виходи:
+-outB4-result
+-out-error
+
+Таймінг:
+44 логічні тіки.
+
+Алгоритм:
+b = -inB4-b
+b[3] = XOR((-inB4-b)[3], -in-sub)
+
+order = funMagnitudeOrder(-inB4-a, b)
+big = order.outB4-big
+small = order.outB4-small
+
+BigExp = big[2]
+BigNeg = big[3]
+SmallExp = small[2]
+SmallNeg = small[3]
+
+bigB5 = [big[0], big[1], 0, 0, 0]
+smallB5 = [small[0], small[1], 0, 0, 0]
+
+expDiff = BigExp - SmallExp
+
+bigShift = 1
+smallShift = expDiff + 1
+
+shiftedBig = funShift25(bigB5, bigShift).outB5-result
+shiftedSmall = funShift25(smallB5, smallShift).outB5-result
+
+sum = funWideAdd25(shiftedBig, shiftedSmall).outB5-result
+diff = funWideSub25(shiftedBig, shiftedSmall).outB5-result
+
+sameSign = (BigNeg == SmallNeg)
+differentSign = NOT(sameSign)
+
+busGate(sum, sameSign).out → selectedB5
+busGate(diff, differentSign).out → selectedB5
+
+norm = funNormalizeAddSub25(selectedB5, BigExp)
+
+-outB4-result[0] = norm.out-hi
+-outB4-result[1] = norm.out-lo
+-outB4-result[2] = norm.out-exp
+-outB4-result[3] = BigNeg AND NOT(norm.out-zero)
+
+-out-error =
+    ((norm.out-exp) < -999999) OR
+    ((norm.out-exp) > 999999)
+
+Принцип:
+Для віднімання інвертується тільки Neg другого операнда. funMagnitudeOrder впорядковує операнди за модулем без урахування знаків.
+Hi та Lo обох операндів розміщуються у B5 з трьома нульовими chunks. Два незалежні funShift25 вирівнюють значення за різницею експонент.
+funWideAdd25 та funWideSub25 працюють паралельно. Порівняння BigNeg == SmallNeg через pass і NOT керує двома BusGate: однакові знаки вибирають суму, різні — різницю.
+funNormalizeAddSub25 нормалізує вибраний B5 відносно BigExp. Знак береться з BigNeg та скидається для нульового результату. Помилка визначається виходом експоненти за допустимі межі.
+
+
+====================================== МНОЖЕННЯ ======================================
+
+-------------------------------------- funMul --------------------------------------
+
+Призначення:
+Помножити два Number через точний chunk-product та нормалізацію.
+
+Входи:
+-inB4-a
+-inB4-b
+
+Виходи:
+-outB4-result
+-out-error
+
+Таймінг:
+28 логічних тіків.
+
+Алгоритм:
+product = funMulCore(
+    (-inB4-a)[0], (-inB4-a)[1],
+    (-inB4-b)[0], (-inB4-b)[1]
+)
+normalized = funMulNormalize10(product.p3, product.p2, product.p1)
+
+notZero = AND((-inB4-a)[0], (-inB4-b)[0])
+exp = (-inB4-a)[2] + (-inB4-b)[2] + normalized.expAdd
+neg = (-inB4-a)[3] XOR (-inB4-b)[3]
+
+-outB4-result[0] = normalized.hi
+-outB4-result[1] = normalized.lo
+-outB4-result[2] = exp × notZero
+-outB4-result[3] = neg AND notZero
+
+-out-error = notZero AND ((exp < -999999) OR (exp > 999999))
+
+Принцип:
+У схемі zero-умова отримується AND від старших chunks нормалізованих A і B; Exp і Neg маскуються цим сигналом, Hi/Lo надходять із нормалізатора. Не потрібні додаткові OR для перевірки Lo.
+
+
+-------------------------------------- funMul5x5 --------------------------------------
+
+Призначення:
+Точно перемножити chunks по п'ять десяткових цифр без 10-значного native multiply.
+
+Входи:
+-in-x
+-in-y
+
+Виходи:
+-out-hi
+-out-lo
+
+Таймінг:
+10 логічних тіків.
+
+Алгоритм:
+xH = floor((-in-x)/1000)
+xL = (-in-x)%1000
+yH = floor((-in-y)/1000)
+yL = (-in-y)%1000
+
+highPart = (xH × yH) × 10
+cross = xH × yL + xL × yH
+lowPart = xL × yL
+
+crossHi = floor(cross / 100)
+crossLo = cross % 100
+lowSum = crossLo × 1000 + lowPart
+
+-out-lo = lowSum % 100000
+-out-hi = highPart + crossHi + floor(lowSum / 100000)
+
+Принцип:
+На схемі дві частини перехресного добутку спочатку розділяються через /100 та %100. Це не дозволяє великій сумі втратити цифри до розбиття на Hi/Lo.
+
+
+-------------------------------------- funMulCore --------------------------------------
+
+Призначення:
+Перемножити дві 10-значні мантиси Hi|Lo та отримати 20-значний добуток у чотирьох base-100000 chunks.
+
+Входи:
+-in-ahi
+-in-alo
+-in-bhi
+-in-blo
+
+Виходи:
+-out-p3
+-out-p2
+-out-p1
+-out-p0
+
+Таймінг:
+17 логічних тіків.
+
+Алгоритм:
+HH = funMul5x5(-in-ahi, -in-bhi)
+HL = funMul5x5(-in-ahi, -in-blo)
+LH = funMul5x5(-in-alo, -in-bhi)
+LL = funMul5x5(-in-alo, -in-blo)
+
+-out-p0 = LL.lo
+
+t1 = LL.hi + HL.lo + LH.lo
+-out-p1 = t1 % 100000
+c1 = floor(t1 / 100000)
+
+t2 = HL.hi + LH.hi + HH.lo + c1
+-out-p2 = t2 % 100000
+c2 = floor(t2 / 100000)
+
+-out-p3 = HH.hi + c2
+
+Принцип:
+Добуток формується як base-100000 carry-chain з чотирьох точних funMul5x5.
+
+
+-------------------------------------- funMulNormalize10 --------------------------------------
+
+Призначення:
+Перетворити 19- або 20-значний добуток p3|p2|p1|p0 у 10-значну нормалізовану мантису з half-up округленням.
+
+Входи:
+-in-p3
+-in-p2
+-in-p1
+
+Виходи:
+-out-hi
+-out-lo
+-out-expAdd
+
+Таймінг:
+7 логічних тіків.
+
+Алгоритм:
+is20 = (-in-p3) >= 10000
+
+hi20 = (-in-p3)
+lo20 = (-in-p2)
+round20 = (-in-p1) >= 50000
+
+lo20r = lo20 + round20
+carry20 = floor(lo20r / 100000)
+hi20r = hi20 + carry20
+lo20f = lo20r % 100000
+
+hi19 = (-in-p3) × 10 + floor((-in-p2) / 10000)
+lo19 = ((-in-p2) % 10000) × 10 + floor((-in-p1) / 10000)
+guard19 = floor((-in-p1) / 1000) % 10
+round19 = guard19 >= 5
+
+lo19r = lo19 + round19
+carry19 = floor(lo19r / 100000)
+hi19r = hi19 + carry19
+lo19f = lo19r % 100000
+roundCarry19 = hi19r >= 100000
+
+hi19f = 10000 × roundCarry19 + hi19r × (1 - roundCarry19)
+lo19f2 = lo19f × (1 - roundCarry19)
+
+-out-hi = hi20r × is20 + hi19f × (1 - is20)
+-out-lo = lo20f × is20 + lo19f2 × (1 - is20)
+-out-expAdd = is20 + roundCarry19 × (1 - is20)
+
+Принцип:
+20-значний добуток потребує +1 до Exp; 19-значний — ні, крім випадку, коли округлення саме створює новий старший розряд.
+
+
+====================================== ДІЛЕННЯ ======================================
+
+-------------------------------------- funDiv --------------------------------------
+
+Призначення:
+Поділити два Number через ініціалізацію дільника, шість двоцифрових кроків і фінальне округлення.
+
+Входи:
+-inB4-a
+-inB4-b
+
+Виходи:
+-outB4-result
+-out-error
+
+Таймінг:
+176 логічних тіків.
+
+Алгоритм:
+init = funDivInit(
+    (-inB4-a)[0], (-inB4-a)[1], (-inB4-a)[2], (-inB4-a)[3],
+    (-inB4-b)[0], (-inB4-b)[1], (-inB4-b)[2], (-inB4-b)[3]
+)
+
+pairs = funDivCore(init.x2, init.x1, init.x0, init.dhi, init.dlo)
+result = funPairsToMantissa(pairs.q0,pairs.q1,pairs.q2,pairs.q3,pairs.q4,pairs.q5)
+
+notZero = NOT(init.aZero)
+exp = init.exp
+neg = init.neg
+
+-outB4-result[0] = result.hi
+-outB4-result[1] = result.lo
+-outB4-result[2] = exp × notZero
+-outB4-result[3] = neg
+
+rangeError = (exp > 999999) OR (exp < -999999)
+-out-error = init.error OR (notZero AND rangeError)
+
+Принцип:
+DivCore ділить на безпечні dHi/dLo, підготовлені в DivInit. Exp не додає expAdd із PairsToMantissa: використовується готове значення з Init. Для нульового чисельника маска формується фізичним NOT(aZero).
+
+
+-------------------------------------- funDivInit --------------------------------------
+
+Призначення:
+Підготувати початкове X, безпечний дільник D, Exp, Neg і zero/error.
+
+Входи:
+-in-ahi
+-in-alo
+-in-aexp
+-in-aneg
+-in-bhi
+-in-blo
+-in-bexp
+-in-bneg
+
+Виходи:
+-out-x2
+-out-x1
+-out-x0
+-out-dhi
+-out-dlo
+-out-exp
+-out-neg
+-out-aZero
+-out-error
+
+Таймінг:
+11 логічних тіків.
+
+Алгоритм:
+-out-aZero = NOR(-in-ahi, -in-alo)
+bZero = NOR(-in-bhi, -in-blo)
+-out-error = bZero
+
+-out-dhi = (-in-bhi) + 10000 × bZero
+-out-dlo = (-in-blo)
+
+less = ((-in-ahi) < (-in-bhi)) OR
+       (((-in-ahi) == (-in-bhi)) AND ((-in-alo) < (-in-blo)))
+
+scale = 10 + 90 × less
+t0 = (-in-alo) × scale
+-out-x0 = t0 % 100000
+carry = floor(t0/100000)
+t1 = (-in-ahi) × scale + carry
+-out-x1 = t1 % 100000
+-out-x2 = floor(t1/100000)
+
+-out-exp = (-in-aexp) - (-in-bexp) - less
+-out-neg = ((-in-aneg) XOR (-in-bneg)) AND NOT(-out-aZero)
+
+Принцип:
+Нульовий дільник виявляє Error, але для обчислювального pipeline dHi примусово стає 10000, щоб не ділити на 0 усередині QHat. Дільник у реальному Divide надходить тільки з виходів dHi/dLo.
+
+
+-------------------------------------- funDivQHat --------------------------------------
+
+Призначення:
+Оцінити наступну пару quotient за двома старшими chunks X та старшим chunk дільника.
+
+Входи:
+-in-x2
+-in-x1
+-in-dhi
+
+Виходи:
+-out-qHat
+
+Таймінг:
+4 логічні тіки.
+
+Алгоритм:
+top = (-in-x2) × 100000 + (-in-x1)
+-out-qHat = floor(top / (-in-dhi))
+
+Принцип:
+На схемі немає clamp: обчислення — множення на 100000, додавання, ділення і floor. У допустимому DivPairStep оцінка qHat лежить у 0...100; значення 100 може бути скориговане до 99. Ненульовий dHi гарантує funDivInit.
+
+
+-------------------------------------- funDivMulD --------------------------------------
+
+Призначення:
+Помножити 10-значний divisor D на qHat 0...100 і повернути тричанковий base-100000 добуток.
+
+Входи:
+-in-qHat
+-in-dhi
+-in-dlo
+
+Виходи:
+-out-p2
+-out-p1
+-out-p0
+
+Таймінг:
+6 логічних тіків.
+
+Алгоритм:
+t0 = (-in-dlo) × (-in-qHat)
+-out-p0 = t0 % 100000
+carry = floor(t0 / 100000)
+
+t1 = (-in-dhi) × (-in-qHat) + carry
+-out-p1 = t1 % 100000
+-out-p2 = floor(t1 / 100000)
+
+Принцип:
+У допустимому DivPairStep qHat лежить у 0...100. Максимальні проміжні значення: t0=9999900, carry=99, t1=9999999. Вони залишаються в безпечному для нативної точності діапазоні.
+
+
+-------------------------------------- funDivCorrectR --------------------------------------
+
+Призначення:
+Відняти qHat×D від X, при від'ємному результаті зменшити qHat на 1 і один раз повернути D до remainder.
+
+Входи:
+-in-x2
+-in-x1
+-in-x0
+-in-p2
+-in-p1
+-in-p0
+-in-qHat
+-in-dhi
+-in-dlo
+
+Виходи:
+-out-q
+-out-rhi
+-out-rlo
+-out-correct
+
+Таймінг:
+11 логічних тіків.
+
+Алгоритм:
+B = 100000
+
+d0 = (-in-x0) - (-in-p0)
+b0 = d0 < 0
+r0 = d0 + b0 × B
+
+d1 = (-in-x1) - (-in-p1) - b0
+b1 = d1 < 0
+r1 = d1 + b1 × B
+
+d2 = (-in-x2) - (-in-p2) - b1
+-out-correct = d2 < 0
+
+t0 = r0 + (-in-dlo) × (-out-correct)
+-out-rlo = t0 % B
+carry = floor(t0 / B)
+
+t1 = r1 + (-in-dhi) × (-out-correct) + carry
+-out-rhi = t1 % B
+
+-out-q = (-in-qHat) - (-out-correct)
+
+Принцип:
+qHat може бути завищений максимум на один correction step у прийнятому pipeline; після корекції remainder знову лежить у 0<=R<D.
+
+
+-------------------------------------- funDivNextX --------------------------------------
+
+Призначення:
+Помножити remainder на 100 і перетворити його на наступне тричанкове X.
+
+Входи:
+-in-rhi
+-in-rlo
+
+Виходи:
+-out-x2
+-out-x1
+-out-x0
+
+Таймінг:
+6 логічних тіків.
+
+Алгоритм:
+t0 = (-in-rlo) × 100
+-out-x0 = t0 % 100000
+carry = floor(t0 / 100000)
+
+t1 = (-in-rhi) × 100 + carry
+-out-x1 = t1 % 100000
+-out-x2 = floor(t1 / 100000)
+
+Принцип:
+Множення remainder на 100 відкриває наступні дві десяткові цифри quotient.
+
+
+-------------------------------------- funDivPairStep --------------------------------------
+
+Призначення:
+Виконати один двоцифровий крок long division і сформувати X для наступного кроку.
+
+Входи:
+-in-x2
+-in-x1
+-in-x0
+-in-dhi
+-in-dlo
+
+Виходи:
+-out-q
+-out-x2
+-out-x1
+-out-x0
+
+Таймінг:
+27 логічних тіків.
+
+Алгоритм:
+qHat = funDivQHat(-in-x2, -in-x1, -in-dhi)
+
+p = funDivMulD(qHat, -in-dhi, -in-dlo)
+
+r = funDivCorrectR(
+    -in-x2,
+    -in-x1,
+    -in-x0,
+    p.p2,
+    p.p1,
+    p.p0,
+    qHat,
+    -in-dhi,
+    -in-dlo
+)
+
+next = funDivNextX(r.rhi, r.rlo)
+
+-out-q = r.q
+-out-x2 = next.x2
+-out-x1 = next.x1
+-out-x0 = next.x0
+
+Принцип:
+Один PairStep видає рівно дві десяткові цифри quotient як число 0...99 і передає remainder×100 далі.
+
+
+-------------------------------------- funDivCore --------------------------------------
+
+Призначення:
+Послідовно виконати шість PairStep і отримати 12 десяткових цифр quotient у шести парах.
+
+Входи:
+-in-x2
+-in-x1
+-in-x0
+-in-dhi
+-in-dlo
+
+Виходи:
+-out-q0
+-out-q1
+-out-q2
+-out-q3
+-out-q4
+-out-q5
+
+Таймінг:
+156 логічних тіків.
+
+Алгоритм:
+s0 = funDivPairStep(-in-x2, -in-x1, -in-x0, -in-dhi, -in-dlo)
+-out-q0 = s0.q
+
+s1 = funDivPairStep(s0.x2, s0.x1, s0.x0, -in-dhi, -in-dlo)
+-out-q1 = s1.q
+
+s2 = funDivPairStep(s1.x2, s1.x1, s1.x0, -in-dhi, -in-dlo)
+-out-q2 = s2.q
+
+s3 = funDivPairStep(s2.x2, s2.x1, s2.x0, -in-dhi, -in-dlo)
+-out-q3 = s3.q
+
+s4 = funDivPairStep(s3.x2, s3.x1, s3.x0, -in-dhi, -in-dlo)
+-out-q4 = s4.q
+
+s5 = funDivPairStep(s4.x2, s4.x1, s4.x0, -in-dhi, -in-dlo)
+-out-q5 = s5.q
+
+Принцип:
+Перші п'ять пар містять 10 значущих цифр, шоста пара дає guard-цифри для фінального округлення.
+
+
+-------------------------------------- funPairsToMantissa --------------------------------------
+
+Призначення:
+Зібрати перші 10 quotient-цифр із q0...q4 у Hi|Lo та округлити їх за першою цифрою q5.
+
+Входи:
+-in-q0
+-in-q1
+-in-q2
+-in-q3
+-in-q4
+-in-q5
+
+Виходи:
+-out-hi
+-out-lo
+-out-expAdd
+
+Таймінг:
+9 логічних тіків.
+
+Алгоритм:
+rawHi =
+    (-in-q0) × 1000 +
+    (-in-q1) × 10 +
+    floor((-in-q2) / 10)
+
+rawLo =
+    ((-in-q2) % 10) × 10000 +
+    (-in-q3) × 100 +
+    (-in-q4)
+
+guard = floor((-in-q5) / 10)
+roundUp = guard >= 5
+
+lo1 = rawLo + roundUp
+carry = floor(lo1 / 100000)
+lo2 = lo1 % 100000
+
+hi1 = rawHi + carry
+-out-expAdd = hi1 >= 100000
+
+-out-hi = hi1 - 90000 × (-out-expAdd)
+-out-lo = lo1 % 100000
+
+Принцип:
+q0...q4 дають рівно 10 значущих цифр; перша цифра q5 є guard digit для half-up, а overflow після округлення додає 1 до Exp.
